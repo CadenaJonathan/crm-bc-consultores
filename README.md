@@ -134,5 +134,5 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 
 ---
 
-⭐ Si este proyecto te parece útil, ¡dale una estrella!# Crear archivos principales
-echo "��� Creando archivos base..."
+⭐ Si este proyecto te parece útil, ¡dale una estrella!
+
