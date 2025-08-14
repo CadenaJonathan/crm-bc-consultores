@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000; // Render usa 10000
 
 // Middlewares
 app.use(helmet());
@@ -25,7 +25,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     service: 'CRM Microservice',
     version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    platform: 'Render'
   });
 });
 
@@ -35,6 +36,7 @@ app.get('/', (req, res) => {
     message: 'CRM Protección Civil - Microservice',
     status: 'running',
     version: '1.0.0',
+    platform: 'Render',
     endpoints: {
       health: '/health',
       pdf: '/api/pdf/*',
@@ -46,15 +48,15 @@ app.get('/', (req, res) => {
 
 // API Routes (placeholder)
 app.get('/api/pdf/status', (req, res) => {
-  res.json({ message: 'PDF service ready', status: 'ok' });
+  res.json({ message: 'PDF service ready', status: 'ok', platform: 'Render' });
 });
 
 app.get('/api/qr/status', (req, res) => {
-  res.json({ message: 'QR service ready', status: 'ok' });
+  res.json({ message: 'QR service ready', status: 'ok', platform: 'Render' });
 });
 
 app.get('/api/notifications/status', (req, res) => {
-  res.json({ message: 'Notifications service ready', status: 'ok' });
+  res.json({ message: 'Notifications service ready', status: 'ok', platform: 'Render' });
 });
 
 // Error handler
@@ -74,8 +76,9 @@ app.use('*', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(` Microservice running on port ${PORT}`);
   console.log(` Health check: http://localhost:${PORT}/health`);
   console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(` Platform: Render`);
 });
