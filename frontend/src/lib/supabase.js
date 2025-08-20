@@ -4,10 +4,14 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables')
+  console.warn('Supabase credentials not found. Authentication will not work.')
+  console.log('Expected:', {
+    VITE_SUPABASE_URL: supabaseUrl ? '✅ Found' : '❌ Missing',
+    VITE_SUPABASE_ANON_KEY: supabaseAnonKey ? '✅ Found' : '❌ Missing'
+  })
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
   auth: {
     autoRefreshToken: true,
     persistSession: true,

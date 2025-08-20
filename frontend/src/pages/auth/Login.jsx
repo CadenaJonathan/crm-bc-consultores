@@ -1,22 +1,9 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
 import { Eye, EyeOff, Mail, Lock, Shield } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
-import { LoadingSpinner } from '../../components/common/Loading'
-
-// Schema de validación
-const loginSchema = z.object({
-  email: z
-    .string()
-    .min(1, 'El email es requerido')
-    .email('Ingresa un email válido'),
-  password: z
-    .string()
-    .min(6, 'La contraseña debe tener al menos 6 caracteres'),
-})
+import toast from 'react-hot-toast'
 
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false)
@@ -29,7 +16,6 @@ const Login = () => {
     formState: { errors, isSubmitting },
     setError
   } = useForm({
-    resolver: zodResolver(loginSchema),
     defaultValues: {
       email: '',
       password: ''
@@ -38,18 +24,23 @@ const Login = () => {
 
   const onSubmit = async (data) => {
     try {
+      console.log('Attempting login with:', data.email)
+      
       const { user, error } = await signIn(data.email, data.password)
       
       if (error) {
+        console.error('Login error:', error)
         setError('root', { message: error })
         return
       }
 
       if (user) {
+        console.log('Login successful:', user.email)
+        toast.success('¡Bienvenido!')
         navigate('/dashboard')
       }
     } catch (error) {
-      console.error('Error en login:', error)
+      console.error('Unexpected error in login:', error)
       setError('root', { message: 'Error inesperado. Intenta de nuevo.' })
     }
   }
@@ -126,6 +117,19 @@ const Login = () => {
             </p>
           </div>
 
+          {/* Indicador de estado de Supabase */}
+          {import.meta.env.DEV && (
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <p className="text-xs text-gray-600">
+                🔧 <strong>Modo desarrollo:</strong> {
+                  import.meta.env.VITE_SUPABASE_URL 
+                    ? '✅ Supabase configurado' 
+                    : '⚠️ Supabase no configurado'
+                }
+              </p>
+            </div>
+          )}
+
           {/* Formulario */}
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
             {/* Campo Email */}
@@ -138,7 +142,13 @@ const Login = () => {
                   <Mail className="h-5 w-5 text-gray-400" />
                 </div>
                 <input
-                  {...register('email')}
+                  {...register('email', {
+                    required: 'El email es requerido',
+                    pattern: {
+                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
+                      message: 'Email inválido'
+                    }
+                  })}
                   type="email"
                   id="email"
                   className={`input-field pl-10 ${errors.email ? 'input-error' : ''}`}
@@ -161,7 +171,13 @@ const Login = () => {
                   <Lock className="h-5 w-5 text-gray-400" />
                 </div>
                 <input
-                  {...register('password')}
+                  {...register('password', {
+                    required: 'La contraseña es requerida',
+                    minLength: {
+                      value: 6,
+                      message: 'Mínimo 6 caracteres'
+                    }
+                  })}
                   type={showPassword ? 'text' : 'password'}
                   id="password"
                   className={`input-field pl-10 pr-10 ${errors.password ? 'input-error' : ''}`}
@@ -194,12 +210,13 @@ const Login = () => {
 
             {/* Forgot Password Link */}
             <div className="text-right">
-              <Link
-                to="/forgot-password"
+              <button
+                type="button"
                 className="text-primary-600 hover:text-primary-700 text-sm font-medium"
+                onClick={() => toast.info('Función próximamente')}
               >
                 ¿Olvidaste tu contraseña?
-              </Link>
+              </button>
             </div>
 
             {/* Botón Submit */}
@@ -210,7 +227,7 @@ const Login = () => {
             >
               {(isSubmitting || loading) ? (
                 <>
-                  <LoadingSpinner size="sm" className="mr-2" />
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
                   Iniciando sesión...
                 </>
               ) : (
@@ -232,13 +249,16 @@ const Login = () => {
             </p>
           </div>
 
-          {/* Demo credentials */}
+          {/* Demo credentials en desarrollo */}
           {import.meta.env.DEV && (
             <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-2 font-medium">Credenciales de prueba:</p>
+              <p className="text-sm text-gray-600 mb-2 font-medium">💡 Credenciales de prueba:</p>
               <div className="text-xs text-gray-500 space-y-1">
                 <p><strong>Admin:</strong> admin@bcconsultores.com / admin123</p>
                 <p><strong>Cliente:</strong> cliente@test.com / cliente123</p>
+                <p className="text-xs text-gray-400 mt-2">
+                  (Primero necesitas crear estas cuentas o configurar Supabase)
+                </p>
               </div>
             </div>
           )}

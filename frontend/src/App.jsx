@@ -11,7 +11,7 @@ import { PageLoading } from './components/common/Loading'
 import Login from './pages/auth/Login.jsx'
 import Register from './pages/auth/Register'
 import Dashboard from './pages/Dashboard'
-import ClientDashboard from './pages/client/ClientDashboard'
+import ClientDashboard from '../src/pages/Client/ClientDashboard.jsx'
 import AdminDashboard from './pages/admin/AdminDashboard'
 
 // Componente para rutas protegidas

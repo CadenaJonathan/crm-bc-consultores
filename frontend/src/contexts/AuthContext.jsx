@@ -22,18 +22,24 @@ export const AuthProvider = ({ children }) => {
     // Verificar usuario inicial
     const initializeAuth = async () => {
       try {
+        console.log('🔐 Inicializando autenticación...')
         const currentUser = await getCurrentUser()
+        console.log('👤 Usuario actual:', currentUser?.email || 'No autenticado')
+        
         setUser(currentUser)
         
         if (currentUser) {
+          console.log('🔍 Obteniendo rol de usuario...')
           const role = await getUserRole(currentUser.id)
+          console.log('👔 Rol obtenido:', role)
           setUserRole(role)
         }
       } catch (error) {
-        console.error('Error inicializando auth:', error)
+        console.error('❌ Error inicializando auth:', error)
       } finally {
         setLoading(false)
         setInitialized(true)
+        console.log('✅ Autenticación inicializada')
       }
     }
 
@@ -42,20 +48,22 @@ export const AuthProvider = ({ children }) => {
     // Escuchar cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('Auth event:', event, session?.user?.email)
+        console.log('🔄 Auth event:', event, session?.user?.email || 'No session')
         
         if (session?.user) {
           setUser(session.user)
           try {
             const role = await getUserRole(session.user.id)
             setUserRole(role)
+            console.log('✅ Usuario autenticado:', session.user.email, 'Rol:', role)
           } catch (error) {
-            console.error('Error obteniendo rol:', error)
+            console.error('❌ Error obteniendo rol:', error)
             setUserRole('cliente') // rol por defecto
           }
         } else {
           setUser(null)
           setUserRole(null)
+          console.log('🚪 Usuario desautenticado')
         }
         
         if (initialized) {
@@ -65,6 +73,7 @@ export const AuthProvider = ({ children }) => {
     )
 
     return () => {
+      console.log('🧹 Limpiando subscription de auth')
       subscription?.unsubscribe()
     }
   }, [initialized])
@@ -73,21 +82,33 @@ export const AuthProvider = ({ children }) => {
   const signIn = async (email, password) => {
     try {
       setLoading(true)
+      console.log('🔐 Intentando login para:', email)
+      
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.toLowerCase().trim(),
         password,
       })
 
       if (error) {
+        console.error('❌ Error de login:', error)
         throw error
       }
 
+      console.log('✅ Login exitoso:', data.user.email)
       toast.success('¡Bienvenido de vuelta!')
       return { user: data.user, error: null }
     } catch (error) {
-      const message = error.message === 'Invalid login credentials' 
-        ? 'Credenciales incorrectas'
-        : error.message
+      console.error('❌ Login falló:', error)
+      let message = 'Error al iniciar sesión'
+      
+      if (error.message === 'Invalid login credentials') {
+        message = 'Credenciales incorrectas'
+      } else if (error.message === 'Email not confirmed') {
+        message = 'Por favor confirma tu email'
+      } else if (error.message) {
+        message = error.message
+      }
+      
       toast.error(message)
       return { user: null, error: message }
     } finally {
@@ -99,6 +120,8 @@ export const AuthProvider = ({ children }) => {
   const signUp = async (email, password, userData = {}) => {
     try {
       setLoading(true)
+      console.log('📝 Intentando registro para:', email)
+      
       const { data, error } = await supabase.auth.signUp({
         email: email.toLowerCase().trim(),
         password,
@@ -108,9 +131,12 @@ export const AuthProvider = ({ children }) => {
       })
 
       if (error) {
+        console.error('❌ Error de registro:', error)
         throw error
       }
 
+      console.log('✅ Registro exitoso:', data.user?.email)
+      
       if (data.user && !data.user.email_confirmed_at) {
         toast.success('Revisa tu email para confirmar tu cuenta')
       } else {
@@ -119,6 +145,7 @@ export const AuthProvider = ({ children }) => {
 
       return { user: data.user, error: null }
     } catch (error) {
+      console.error('❌ Registro falló:', error)
       toast.error(error.message)
       return { user: null, error: error.message }
     } finally {
@@ -130,18 +157,22 @@ export const AuthProvider = ({ children }) => {
   const signOut = async () => {
     try {
       setLoading(true)
+      console.log('🚪 Cerrando sesión...')
+      
       const { error } = await supabase.auth.signOut()
       
       if (error) {
+        console.error('❌ Error cerrando sesión:', error)
         throw error
       }
 
       setUser(null)
       setUserRole(null)
+      console.log('✅ Sesión cerrada exitosamente')
       toast.success('Sesión cerrada')
     } catch (error) {
+      console.error('❌ Error al cerrar sesión:', error)
       toast.error('Error al cerrar sesión')
-      console.error('Error signing out:', error)
     } finally {
       setLoading(false)
     }
@@ -150,6 +181,8 @@ export const AuthProvider = ({ children }) => {
   // Función para resetear password
   const resetPassword = async (email) => {
     try {
+      console.log('🔐 Enviando reset de password para:', email)
+      
       const { error } = await supabase.auth.resetPasswordForEmail(
         email.toLowerCase().trim(),
         {
@@ -164,25 +197,7 @@ export const AuthProvider = ({ children }) => {
       toast.success('Revisa tu email para resetear tu contraseña')
       return { error: null }
     } catch (error) {
-      toast.error(error.message)
-      return { error: error.message }
-    }
-  }
-
-  // Función para actualizar password
-  const updatePassword = async (newPassword) => {
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword
-      })
-
-      if (error) {
-        throw error
-      }
-
-      toast.success('Contraseña actualizada exitosamente')
-      return { error: null }
-    } catch (error) {
+      console.error('❌ Error reset password:', error)
       toast.error(error.message)
       return { error: error.message }
     }
@@ -214,11 +229,17 @@ export const AuthProvider = ({ children }) => {
     signUp,
     signOut,
     resetPassword,
-    updatePassword,
     hasPermission,
     isAdmin,
     isAuthenticated: !!user,
   }
+
+  console.log('🎛️ AuthContext state:', {
+    user: user?.email || 'No user',
+    userRole,
+    loading,
+    isAuthenticated: !!user
+  })
 
   return (
     <AuthContext.Provider value={value}>
