@@ -7,10 +7,8 @@ import { queryClient } from './lib/queryClient'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { PageLoading } from './components/common/Loading'
 
-// Importaciones de páginas (las crearemos en los siguientes pasos)
+// Importaciones de páginas
 import Login from './pages/auth/Login.jsx'
-import Register from './pages/auth/Register'
-import Dashboard from './pages/Dashboard'
 import ClientDashboard from '../src/pages/Client/ClientDashboard.jsx'
 import AdminDashboard from './pages/admin/AdminDashboard'
 
@@ -27,7 +25,14 @@ const ProtectedRoute = ({ children, requiredRole = null }) => {
   }
 
   if (requiredRole && !hasPermission(requiredRole)) {
-    return <Navigate to="/dashboard" replace />
+    // Redirigir según el rol del usuario si no tiene permisos para la ruta solicitada
+    if (userRole === 'cliente') {
+      return <Navigate to="/dashboard/cliente" replace />
+    } else if (userRole === 'admin' || userRole === 'superadmin') {
+      return <Navigate to="/dashboard/admin" replace />
+    } else {
+      return <Navigate to="/login" replace />
+    }
   }
 
   return children
@@ -35,17 +40,43 @@ const ProtectedRoute = ({ children, requiredRole = null }) => {
 
 // Componente para rutas públicas (solo accesibles sin autenticación)
 const PublicRoute = ({ children }) => {
-  const { user, loading } = useAuth()
+  const { user, userRole, loading } = useAuth()
 
   if (loading) {
     return <PageLoading />
   }
 
   if (user) {
-    return <Navigate to="/dashboard" replace />
+    // Redirigir según el rol del usuario autenticado
+    if (userRole === 'cliente') {
+      return <Navigate to="/dashboard/cliente" replace />
+    } else if (userRole === 'admin' || userRole === 'superadmin') {
+      return <Navigate to="/dashboard/admin" replace />
+    } else {
+      return <Navigate to="/dashboard/cliente" replace />
+    }
   }
 
   return children
+}
+
+// Componente de redirección inteligente para /dashboard
+const DashboardRedirect = () => {
+  const { userRole, loading } = useAuth()
+
+  if (loading) {
+    return <PageLoading />
+  }
+
+  // Redirigir según el rol
+  if (userRole === 'cliente') {
+    return <Navigate to="/dashboard/cliente" replace />
+  } else if (userRole === 'admin' || userRole === 'superadmin') {
+    return <Navigate to="/dashboard/admin" replace />
+  } else {
+    // Si no hay rol definido, ir al login
+    return <Navigate to="/login" replace />
+  }
 }
 
 // Componente principal de rutas
@@ -58,7 +89,7 @@ const AppRoutes = () => {
 
   return (
     <Routes>
-      {/* Rutas públicas */}
+      {/* Ruta de login */}
       <Route 
         path="/login" 
         element={
@@ -67,28 +98,20 @@ const AppRoutes = () => {
           </PublicRoute>
         } 
       />
-      <Route 
-        path="/register" 
-        element={
-          <PublicRoute>
-            <Register />
-          </PublicRoute>
-        } 
-      />
 
-      {/* Rutas protegidas */}
+      {/* Ruta de dashboard genérico - redirige según rol */}
       <Route 
         path="/dashboard" 
         element={
           <ProtectedRoute>
-            <Dashboard />
+            <DashboardRedirect />
           </ProtectedRoute>
         } 
       />
 
-      {/* Dashboard específico por rol */}
+      {/* Dashboard para clientes */}
       <Route 
-        path="/client/*" 
+        path="/dashboard/cliente/*" 
         element={
           <ProtectedRoute requiredRole="cliente">
             <ClientDashboard />
@@ -96,17 +119,22 @@ const AppRoutes = () => {
         } 
       />
 
+      {/* Dashboard para administradores (admin y superadmin) */}
       <Route 
-        path="/admin/*" 
+        path="/dashboard/admin/*" 
         element={
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole={['admin', 'superadmin']}>
             <AdminDashboard />
           </ProtectedRoute>
         } 
       />
 
-      {/* Ruta por defecto */}
+      {/* Ruta raíz - redirige a dashboard */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      
+      {/* Rutas legacy/alternativas para compatibilidad */}
+      <Route path="/client/*" element={<Navigate to="/dashboard/cliente" replace />} />
+      <Route path="/admin/*" element={<Navigate to="/dashboard/admin" replace />} />
       
       {/* Ruta 404 */}
       <Route 
@@ -116,12 +144,20 @@ const AppRoutes = () => {
             <div className="text-center">
               <h1 className="text-6xl font-bold text-gray-900 mb-4">404</h1>
               <p className="text-xl text-gray-600 mb-8">Página no encontrada</p>
-              <button 
-                onClick={() => window.history.back()}
-                className="btn-primary"
-              >
-                Volver atrás
-              </button>
+              <div className="space-x-4">
+                <button 
+                  onClick={() => window.history.back()}
+                  className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+                >
+                  Volver atrás
+                </button>
+                <button 
+                  onClick={() => window.location.href = '/dashboard'}
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                >
+                  Ir al Dashboard
+                </button>
+              </div>
             </div>
           </div>
         } 

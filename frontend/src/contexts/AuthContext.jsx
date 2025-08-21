@@ -1,249 +1,203 @@
-import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase, getCurrentUser, getUserRole } from '../lib/supabase'
-import toast from 'react-hot-toast'
+// contexts/AuthContext.jsx - ACTUALIZADO
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
-const AuthContext = createContext({})
+const AuthContext = createContext({});
 
 export const useAuth = () => {
-  const context = useContext(AuthContext)
+  const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth debe ser usado dentro de AuthProvider')
+    throw new Error('useAuth debe ser usado dentro de un AuthProvider');
   }
-  return context
-}
+  return context;
+};
 
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null)
-  const [userRole, setUserRole] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [initialized, setInitialized] = useState(false)
+// Función para obtener el rol del usuario desde ambas tablas
+const getUserRole = async (userEmail) => {
+  console.log('🔍 Buscando rol para:', userEmail);
+  
+  try {
+    // 1. PRIMERO: Buscar en tabla public.users (admins/superadmins)
+    const { data: adminUser, error: adminError } = await supabase
+      .from('users')
+      .select('role, email')
+      .eq('email', userEmail)
+      .single();
 
-  useEffect(() => {
-    // Verificar usuario inicial
-    const initializeAuth = async () => {
-      try {
-        console.log('🔐 Inicializando autenticación...')
-        const currentUser = await getCurrentUser()
-        console.log('👤 Usuario actual:', currentUser?.email || 'No autenticado')
-        
-        setUser(currentUser)
-        
-        if (currentUser) {
-          console.log('🔍 Obteniendo rol de usuario...')
-          const role = await getUserRole(currentUser.id)
-          console.log('👔 Rol obtenido:', role)
-          setUserRole(role)
-        }
-      } catch (error) {
-        console.error('❌ Error inicializando auth:', error)
-      } finally {
-        setLoading(false)
-        setInitialized(true)
-        console.log('✅ Autenticación inicializada')
-      }
+    if (!adminError && adminUser) {
+      console.log('✅ Usuario admin encontrado:', adminUser);
+      return {
+        role: adminUser.role,
+        isActive: true,
+        source: 'public'
+      };
     }
 
-    initializeAuth()
+    console.log('❌ No encontrado en public.users, es cliente por defecto');
+
+    // 2. Si no está en public.users, es cliente por defecto
+    return {
+      role: 'cliente',
+      isActive: true,
+      source: 'auth'
+    };
+
+  } catch (error) {
+    console.error('❌ Error obteniendo rol:', error);
+    return {
+      role: 'cliente',
+      isActive: true,
+      source: 'auth'
+    };
+  }
+};
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [userRole, setUserRole] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Función para verificar permisos
+  const hasPermission = (requiredRole) => {
+    if (!userRole) return false;
+    
+    // Si requiredRole es un array, verificar si el userRole está incluido
+    if (Array.isArray(requiredRole)) {
+      return requiredRole.includes(userRole);
+    }
+    
+    // Lógica de permisos jerárquicos
+    const roleHierarchy = {
+      'cliente': ['cliente'],
+      'admin': ['cliente', 'admin'],
+      'superadmin': ['cliente', 'admin', 'superadmin']
+    };
+    
+    const userPermissions = roleHierarchy[userRole] || [];
+    return userPermissions.includes(requiredRole);
+  };
+
+  // Verificar sesión actual
+  useEffect(() => {
+    const getSession = async () => {
+      try {
+        setLoading(true);
+        
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('Error obteniendo sesión:', error);
+          setUser(null);
+          setUserRole(null);
+          return;
+        }
+
+        if (session?.user) {
+          console.log('✅ Sesión activa para:', session.user.email);
+          
+          // Obtener rol del usuario
+          const userInfo = await getUserRole(session.user.email);
+          
+          setUser(session.user.email);
+          setUserRole(userInfo.role);
+          
+          console.log('✅ Usuario autenticado:', {
+            email: session.user.email,
+            role: userInfo.role,
+            source: userInfo.source
+          });
+        } else {
+          console.log('❌ No hay sesión activa');
+          setUser(null);
+          setUserRole(null);
+        }
+      } catch (error) {
+        console.error('❌ Error en getSession:', error);
+        setUser(null);
+        setUserRole(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    getSession();
 
     // Escuchar cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('🔄 Auth event:', event, session?.user?.email || 'No session')
+        console.log('🔄 Cambio de auth state:', event);
         
-        if (session?.user) {
-          setUser(session.user)
-          try {
-            const role = await getUserRole(session.user.id)
-            setUserRole(role)
-            console.log('✅ Usuario autenticado:', session.user.email, 'Rol:', role)
-          } catch (error) {
-            console.error('❌ Error obteniendo rol:', error)
-            setUserRole('cliente') // rol por defecto
-          }
-        } else {
-          setUser(null)
-          setUserRole(null)
-          console.log('🚪 Usuario desautenticado')
-        }
-        
-        if (initialized) {
-          setLoading(false)
+        if (event === 'SIGNED_IN' && session?.user) {
+          console.log('✅ Usuario conectado:', session.user.email);
+          
+          const userInfo = await getUserRole(session.user.email);
+          
+          setUser(session.user.email);
+          setUserRole(userInfo.role);
+          
+          console.log('✅ Rol asignado:', userInfo.role);
+        } else if (event === 'SIGNED_OUT') {
+          console.log('❌ Usuario desconectado');
+          setUser(null);
+          setUserRole(null);
         }
       }
-    )
+    );
 
     return () => {
-      console.log('🧹 Limpiando subscription de auth')
-      subscription?.unsubscribe()
-    }
-  }, [initialized])
-
-  // Función de login
-  const signIn = async (email, password) => {
-    try {
-      setLoading(true)
-      console.log('🔐 Intentando login para:', email)
-      
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.toLowerCase().trim(),
-        password,
-      })
-
-      if (error) {
-        console.error('❌ Error de login:', error)
-        throw error
-      }
-
-      console.log('✅ Login exitoso:', data.user.email)
-      toast.success('¡Bienvenido de vuelta!')
-      return { user: data.user, error: null }
-    } catch (error) {
-      console.error('❌ Login falló:', error)
-      let message = 'Error al iniciar sesión'
-      
-      if (error.message === 'Invalid login credentials') {
-        message = 'Credenciales incorrectas'
-      } else if (error.message === 'Email not confirmed') {
-        message = 'Por favor confirma tu email'
-      } else if (error.message) {
-        message = error.message
-      }
-      
-      toast.error(message)
-      return { user: null, error: message }
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Función de registro
-  const signUp = async (email, password, userData = {}) => {
-    try {
-      setLoading(true)
-      console.log('📝 Intentando registro para:', email)
-      
-      const { data, error } = await supabase.auth.signUp({
-        email: email.toLowerCase().trim(),
-        password,
-        options: {
-          data: userData
-        }
-      })
-
-      if (error) {
-        console.error('❌ Error de registro:', error)
-        throw error
-      }
-
-      console.log('✅ Registro exitoso:', data.user?.email)
-      
-      if (data.user && !data.user.email_confirmed_at) {
-        toast.success('Revisa tu email para confirmar tu cuenta')
-      } else {
-        toast.success('¡Cuenta creada exitosamente!')
-      }
-
-      return { user: data.user, error: null }
-    } catch (error) {
-      console.error('❌ Registro falló:', error)
-      toast.error(error.message)
-      return { user: null, error: error.message }
-    } finally {
-      setLoading(false)
-    }
-  }
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   // Función de logout
-  const signOut = async () => {
+  const logout = async () => {
     try {
-      setLoading(true)
-      console.log('🚪 Cerrando sesión...')
+      console.log('🔄 Iniciando logout...');
       
-      const { error } = await supabase.auth.signOut()
+      const { error } = await supabase.auth.signOut();
       
       if (error) {
-        console.error('❌ Error cerrando sesión:', error)
-        throw error
+        console.error('Error en logout:', error);
+        throw error;
       }
 
-      setUser(null)
-      setUserRole(null)
-      console.log('✅ Sesión cerrada exitosamente')
-      toast.success('Sesión cerrada')
-    } catch (error) {
-      console.error('❌ Error al cerrar sesión:', error)
-      toast.error('Error al cerrar sesión')
-    } finally {
-      setLoading(false)
-    }
-  }
+      // Limpiar estado local
+      setUser(null);
+      setUserRole(null);
 
-  // Función para resetear password
-  const resetPassword = async (email) => {
-    try {
-      console.log('🔐 Enviando reset de password para:', email)
+      // Limpiar storage
+      localStorage.clear();
+      sessionStorage.clear();
+
+      console.log('✅ Logout exitoso');
       
-      const { error } = await supabase.auth.resetPasswordForEmail(
-        email.toLowerCase().trim(),
-        {
-          redirectTo: `${window.location.origin}/reset-password`,
-        }
-      )
-
-      if (error) {
-        throw error
-      }
-
-      toast.success('Revisa tu email para resetear tu contraseña')
-      return { error: null }
+      return { success: true };
     } catch (error) {
-      console.error('❌ Error reset password:', error)
-      toast.error(error.message)
-      return { error: error.message }
+      console.error('❌ Error durante logout:', error);
+      return { success: false, error };
     }
-  }
-
-  // Verificar permisos por rol
-  const hasPermission = (requiredRole) => {
-    if (!userRole) return false
-    
-    const roleHierarchy = {
-      'superadmin': 3,
-      'admin': 2,
-      'cliente': 1
-    }
-    
-    return roleHierarchy[userRole] >= roleHierarchy[requiredRole]
-  }
-
-  // Verificar si es admin o superadmin
-  const isAdmin = () => {
-    return userRole === 'admin' || userRole === 'superadmin'
-  }
+  };
 
   const value = {
     user,
     userRole,
     loading,
-    signIn,
-    signUp,
-    signOut,
-    resetPassword,
-    hasPermission,
-    isAdmin,
     isAuthenticated: !!user,
-  }
+    hasPermission,
+    logout
+  };
 
+  // Debug: Mostrar estado actual
   console.log('🎛️ AuthContext state:', {
-    user: user?.email || 'No user',
+    user,
     userRole,
     loading,
     isAuthenticated: !!user
-  })
+  });
 
   return (
     <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
-  )
-}
+  );
+};

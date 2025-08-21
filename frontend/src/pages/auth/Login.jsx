@@ -1,271 +1,266 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
-import { Eye, EyeOff, Mail, Lock, Shield } from 'lucide-react'
-import { useAuth } from '../../contexts/AuthContext'
-import toast from 'react-hot-toast'
+// Login.jsx - VERSIÓN CORREGIDA PARA DOS TABLAS DE USUARIOS
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
+import { toast } from 'react-hot-toast';
 
 const Login = () => {
-  const [showPassword, setShowPassword] = useState(false)
-  const { signIn, loading } = useAuth()
-  const navigate = useNavigate()
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-    setError
-  } = useForm({
-    defaultValues: {
-      email: '',
-      password: ''
+  const getUserRole = async (userEmail) => {
+    console.log('🔍 Buscando rol para:', userEmail);
+    
+    // 1. PRIMERO: Buscar en tabla public.users (admins/superadmins)
+    const { data: adminUser, error: adminError } = await supabase
+      .from('users')
+      .select('role, email')
+      .eq('email', userEmail)
+      .single();
+
+    if (!adminError && adminUser) {
+      console.log('✅ Usuario encontrado en public.users:', adminUser);
+      return {
+        role: adminUser.role,
+        isActive: true, // Los de public.users están activos por defecto
+        source: 'public'
+      };
     }
-  })
 
-  const onSubmit = async (data) => {
+    console.log('❌ No encontrado en public.users, buscando en auth.users...');
+
+    // 2. SEGUNDO: Buscar en auth.users (clientes)
+    // Los usuarios de auth.users son clientes por defecto
+    const { data: authUser, error: authError } = await supabase.auth.getUser();
+    
+    if (!authError && authUser.user && authUser.user.email === userEmail) {
+      console.log('✅ Usuario encontrado en auth.users:', authUser.user.email);
+      
+      // Verificar si el usuario está confirmado
+      const isActive = authUser.user.email_confirmed_at !== null;
+      
+      return {
+        role: 'cliente', // Los usuarios de auth.users son clientes
+        isActive: isActive,
+        source: 'auth'
+      };
+    }
+
+    console.log('❌ Usuario no encontrado en ninguna tabla');
+    throw new Error('Usuario no encontrado en el sistema');
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    
+    if (!email || !password) {
+      toast.error('Por favor ingresa todos los campos');
+      return;
+    }
+
+    setLoading(true);
+
     try {
-      console.log('Attempting login with:', data.email)
-      
-      const { user, error } = await signIn(data.email, data.password)
-      
-      if (error) {
-        console.error('Login error:', error)
-        setError('root', { message: error })
-        return
+      console.log('🚀 Iniciando login para:', email);
+
+      // 1. AUTENTICACIÓN CON SUPABASE
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password,
+      });
+
+      if (authError) {
+        console.error('❌ Error de autenticación:', authError);
+        throw authError;
       }
 
-      if (user) {
-        console.log('Login successful:', user.email)
-        toast.success('¡Bienvenido!')
-        navigate('/dashboard')
+      console.log('✅ Autenticación exitosa para:', authData.user.email);
+
+      // 2. OBTENER ROL DEL USUARIO (desde ambas tablas)
+      const userInfo = await getUserRole(email.trim());
+      
+      console.log('✅ Información del usuario:', userInfo);
+
+      // 3. VERIFICAR QUE LA CUENTA ESTÉ ACTIVA
+      if (!userInfo.isActive) {
+        await supabase.auth.signOut();
+        throw new Error('Tu cuenta está desactivada. Contacta al administrador.');
       }
+
+      // 4. VALIDAR ROL
+      const validRoles = ['cliente', 'admin', 'superadmin'];
+      if (!validRoles.includes(userInfo.role)) {
+        await supabase.auth.signOut();
+        throw new Error('Usuario sin permisos válidos');
+      }
+
+      // 5. MOSTRAR MENSAJE DE ÉXITO
+      toast.success(`¡Bienvenido! Rol: ${userInfo.role} (${userInfo.source})`);
+      
+      console.log(`🎯 Redirigiendo usuario con rol: ${userInfo.role} desde ${userInfo.source}`);
+      
+      // 6. REDIRECCIÓN SEGÚN ROL
+      if (userInfo.role === 'cliente') {
+        navigate('/dashboard/cliente', { replace: true });
+      } else if (userInfo.role === 'admin' || userInfo.role === 'superadmin') {
+        navigate('/dashboard/admin', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
+      }
+
     } catch (error) {
-      console.error('Unexpected error in login:', error)
-      setError('root', { message: 'Error inesperado. Intenta de nuevo.' })
+      console.error('❌ Error en login:', error);
+      
+      // Mensajes de error específicos
+      let errorMessage = 'Error al iniciar sesión';
+      
+      if (error.message?.includes('Invalid login credentials')) {
+        errorMessage = 'Email o contraseña incorrectos';
+      } else if (error.message?.includes('Email not confirmed')) {
+        errorMessage = 'Email no confirmado. Revisa tu correo.';
+      } else if (error.message?.includes('Too many requests')) {
+        errorMessage = 'Demasiados intentos. Intenta más tarde.';
+      } else if (error.message?.includes('User not found') || error.message?.includes('Usuario no encontrado')) {
+        errorMessage = 'Usuario no registrado en el sistema';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage);
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="min-h-screen flex">
-      {/* Panel izquierdo - Información */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary-600 to-primary-800 relative overflow-hidden">
-        <div className="absolute inset-0 bg-black/20"></div>
-        <div className="relative z-10 flex flex-col justify-center px-12 text-white">
-          <div className="mb-8">
-            <div className="flex items-center mb-6">
-              <Shield className="w-12 h-12 mr-4" />
-              <div>
-                <h1 className="text-3xl font-bold">B&C Consultores</h1>
-                <p className="text-primary-100">CRM Protección Civil</p>
-              </div>
+      {/* Panel izquierdo - Información del sistema */}
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-blue-600 to-blue-800 text-white p-12 flex-col justify-center">
+        <div className="max-w-md">
+          <div className="flex items-center mb-8">
+            <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center mr-4">
+              <span className="text-blue-600 text-xl font-bold">B&C</span>
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">B&C Consultores</h1>
+              <p className="text-blue-200">CRM Protección Civil</p>
             </div>
           </div>
           
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-semibold mb-4">
-                Gestiona tu documentación de Protección Civil
-              </h2>
-              <p className="text-primary-100 text-lg">
-                Sistema integral para el manejo de documentos FEII con validación QR y alertas automáticas.
-              </p>
+          <h2 className="text-2xl font-semibold mb-6">
+            Gestiona tu documentación de Protección Civil
+          </h2>
+          
+          <p className="text-blue-100 mb-8">
+            Sistema integral para el manejo de documentos FEII con 
+            validación QR y alertas automáticas.
+          </p>
+
+          <div className="space-y-4">
+            <div className="flex items-center">
+              <div className="w-2 h-2 bg-white rounded-full mr-3"></div>
+              <span>Documentos con códigos QR únicos</span>
             </div>
-            
-            <div className="space-y-4">
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-primary-300 rounded-full mr-3"></div>
-                <span>Documentos con códigos QR únicos</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-primary-300 rounded-full mr-3"></div>
-                <span>Alertas automáticas de vencimiento</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-primary-300 rounded-full mr-3"></div>
-                <span>Validación externa sin autenticación</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-primary-300 rounded-full mr-3"></div>
-                <span>Cumplimiento automático por municipio</span>
-              </div>
+            <div className="flex items-center">
+              <div className="w-2 h-2 bg-white rounded-full mr-3"></div>
+              <span>Alertas automáticas de vencimiento</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-2 h-2 bg-white rounded-full mr-3"></div>
+              <span>Validación externa sin autenticación</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-2 h-2 bg-white rounded-full mr-3"></div>
+              <span>Cumplimiento automático por municipio</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Panel derecho - Formulario de Login */}
-      <div className="w-full lg:w-1/2 flex flex-col justify-center px-8 lg:px-12">
-        <div className="w-full max-w-md mx-auto">
-          {/* Header móvil */}
-          <div className="lg:hidden text-center mb-8">
-            <div className="flex items-center justify-center mb-4">
-              <Shield className="w-10 h-10 text-primary-600 mr-3" />
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">B&C Consultores</h1>
-                <p className="text-gray-600">CRM Protección Civil</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Título */}
+      {/* Panel derecho - Formulario de login */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-gray-50">
+        <div className="max-w-md w-full">
           <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold text-gray-900 mb-2">
-              Iniciar Sesión
-            </h2>
-            <p className="text-gray-600">
+            <div className="lg:hidden flex items-center justify-center mb-4">
+              <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center mr-2">
+                <span className="text-white text-sm font-bold">B&C</span>
+              </div>
+              <span className="text-xl font-bold text-gray-900">B&C Consultores</span>
+            </div>
+            <h2 className="text-3xl font-bold text-gray-900">Iniciar Sesión</h2>
+            <p className="text-gray-600 mt-2">
               Accede a tu cuenta para gestionar tus documentos
             </p>
           </div>
 
-          {/* Indicador de estado de Supabase */}
-          {import.meta.env.DEV && (
-            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-              <p className="text-xs text-gray-600">
-                🔧 <strong>Modo desarrollo:</strong> {
-                  import.meta.env.VITE_SUPABASE_URL 
-                    ? '✅ Supabase configurado' 
-                    : '⚠️ Supabase no configurado'
-                }
-              </p>
-            </div>
-          )}
-
-          {/* Formulario */}
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-            {/* Campo Email */}
+          <form onSubmit={handleLogin} className="space-y-6">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
                 Correo electrónico
               </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  {...register('email', {
-                    required: 'El email es requerido',
-                    pattern: {
-                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                      message: 'Email inválido'
-                    }
-                  })}
-                  type="email"
-                  id="email"
-                  className={`input-field pl-10 ${errors.email ? 'input-error' : ''}`}
-                  placeholder="ejemplo@correo.com"
-                  autoComplete="email"
-                />
-              </div>
-              {errors.email && (
-                <p className="text-danger-600 text-sm mt-1">{errors.email.message}</p>
-              )}
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                placeholder="usuario@ejemplo.com"
+                required
+                disabled={loading}
+              />
             </div>
 
-            {/* Campo Password */}
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
                 Contraseña
               </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  {...register('password', {
-                    required: 'La contraseña es requerida',
-                    minLength: {
-                      value: 6,
-                      message: 'Mínimo 6 caracteres'
-                    }
-                  })}
-                  type={showPassword ? 'text' : 'password'}
-                  id="password"
-                  className={`input-field pl-10 pr-10 ${errors.password ? 'input-error' : ''}`}
-                  placeholder="••••••••"
-                  autoComplete="current-password"
-                />
-                <button
-                  type="button"
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" />
-                  ) : (
-                    <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />
-                  )}
-                </button>
-              </div>
-              {errors.password && (
-                <p className="text-danger-600 text-sm mt-1">{errors.password.message}</p>
-              )}
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                placeholder="••••••••"
+                required
+                disabled={loading}
+              />
             </div>
 
-            {/* Error general */}
-            {errors.root && (
-              <div className="bg-danger-50 border border-danger-200 text-danger-700 px-4 py-3 rounded-lg">
-                {errors.root.message}
-              </div>
-            )}
-
-            {/* Forgot Password Link */}
-            <div className="text-right">
-              <button
-                type="button"
-                className="text-primary-600 hover:text-primary-700 text-sm font-medium"
-                onClick={() => toast.info('Función próximamente')}
-              >
-                ¿Olvidaste tu contraseña?
-              </button>
-            </div>
-
-            {/* Botón Submit */}
             <button
               type="submit"
-              disabled={isSubmitting || loading}
-              className="w-full btn-primary flex items-center justify-center py-3"
+              disabled={loading}
+              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {(isSubmitting || loading) ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                  Iniciando sesión...
-                </>
-              ) : (
-                'Iniciar Sesión'
-              )}
+              {loading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
             </button>
           </form>
 
-          {/* Link a Register */}
-          <div className="text-center mt-8">
-            <p className="text-gray-600">
-              ¿No tienes cuenta?{' '}
-              <Link
-                to="/register"
-                className="text-primary-600 hover:text-primary-700 font-medium"
-              >
-                Crear cuenta
-              </Link>
+          {/* Información para nuevos usuarios */}
+          <div className="mt-6 text-center text-sm text-gray-500">
+            <p>¿Necesitas una cuenta?</p>
+            <p className="mt-1 font-medium text-gray-700">
+              Contacta al administrador del sistema
             </p>
           </div>
 
-          {/* Demo credentials en desarrollo */}
-          {import.meta.env.DEV && (
-            <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-2 font-medium">💡 Credenciales de prueba:</p>
-              <div className="text-xs text-gray-500 space-y-1">
-                <p><strong>Admin:</strong> admin@bcconsultores.com / admin123</p>
-                <p><strong>Cliente:</strong> cliente@test.com / cliente123</p>
-                <p className="text-xs text-gray-400 mt-2">
-                  (Primero necesitas crear estas cuentas o configurar Supabase)
-                </p>
+          {/* Credenciales de prueba - Desarrollo */}
+          <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="text-xs text-blue-700 space-y-1">
+              <div className="font-medium text-blue-800 mb-2">🔧 Cuentas disponibles:</div>
+              <div><strong>Admin:</strong> admin@bcconsultores.com</div>
+              <div><strong>Superadmin:</strong> admin@test.com</div>
+              <div><strong>Cliente:</strong> cliente@123.com</div>
+              <div className="text-blue-600 mt-2 text-xs">
+                (Sistema detecta automáticamente el rol)
               </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default Login
+export default Login;
