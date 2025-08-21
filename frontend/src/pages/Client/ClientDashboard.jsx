@@ -187,30 +187,91 @@ const ClientDashboard = () => {
   }, [userMenuOpen]);
 
   const handleLogout = async () => {
-    try {
-      console.log('🔄 Iniciando logout desde dashboard...');
+  // Flag para evitar múltiples ejecuciones
+  if (window.isLoggingOut) {
+    console.log('⚠️ Logout ya en proceso, ignorando...');
+    return;
+  }
+  
+  window.isLoggingOut = true;
+  
+  try {
+    console.log('🔄 Iniciando logout...');
+    
+    // Cerrar menú inmediatamente
+    setUserMenuOpen(false);
+    
+    // Toast con timeout más corto
+    const toastId = toast.loading('Cerrando sesión...', { 
+      duration: 3000 // Máximo 3 segundos
+    });
+    
+    // Timeout de seguridad - si no termina en 5 segundos, forzar logout
+    const timeoutId = setTimeout(() => {
+      console.log('⏰ Timeout de logout, forzando salida...');
+      forceLogout(toastId);
+    }, 5000);
+    
+    // Intentar logout normal
+    const result = await Promise.race([
+      logout(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 4000)
+      )
+    ]);
+    
+    // Limpiar timeout si llegamos aquí
+    clearTimeout(timeoutId);
+    
+    if (result && result.success) {
+      console.log('✅ Logout exitoso');
+      toast.success('Sesión cerrada', { id: toastId, duration: 1000 });
       
-      const result = await logout();
-      
-      if (result.success) {
-        toast.success('Sesión cerrada correctamente');
-        navigate('/login', { replace: true });
-      } else {
-        throw new Error(result.error?.message || 'Error al cerrar sesión');
-      }
-    } catch (error) {
-      console.error('❌ Error durante logout:', error);
-      
-      // Forzar logout si hay error
-      localStorage.clear();
-      sessionStorage.clear();
-      toast.error('Error al cerrar sesión, redirigiendo...');
-      
-      setTimeout(() => {
-        window.location.href = '/login';
-      }, 1000);
+      // Redirección inmediata
+      window.location.href = '/login';
+    } else {
+      throw new Error('Logout falló');
     }
-  };
+    
+  } catch (error) {
+    console.error('❌ Error en logout:', error);
+    forceLogout();
+  } finally {
+    window.isLoggingOut = false;
+  }
+};
+
+// Función auxiliar para forzar logout
+const forceLogout = (toastId = null) => {
+  console.log('🚨 Ejecutando logout forzado...');
+  
+  try {
+    // Logout directo de Supabase (sin await para evitar colgarse)
+    supabase.auth.signOut().catch(e => console.log('Error Supabase:', e));
+  } catch (e) {
+    console.log('Error en signOut:', e);
+  }
+  
+  // Limpiar todo el storage
+  try {
+    localStorage.clear();
+    sessionStorage.clear();
+  } catch (e) {
+    console.log('Error limpiando storage:', e);
+  }
+  
+  // Toast rápido
+  if (toastId) {
+    toast.error('Sesión cerrada', { id: toastId, duration: 1000 });
+  } else {
+    toast.error('Sesión cerrada', { duration: 1000 });
+  }
+  
+  // Redirección inmediata y forzada
+  setTimeout(() => {
+    window.location.href = '/login';
+  }, 500);
+};
 
   const navigation = [
     { 

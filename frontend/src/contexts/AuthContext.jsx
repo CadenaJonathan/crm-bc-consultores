@@ -149,34 +149,51 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
-  // Función de logout
-  const logout = async () => {
-    try {
-      console.log('🔄 Iniciando logout...');
-      
-      const { error } = await supabase.auth.signOut();
-      
-      if (error) {
-        console.error('Error en logout:', error);
-        throw error;
-      }
+  // FUNCIÓN DE LOGOUT MEJORADA EN AuthContext.jsx
 
-      // Limpiar estado local
-      setUser(null);
-      setUserRole(null);
 
-      // Limpiar storage
-      localStorage.clear();
-      sessionStorage.clear();
-
-      console.log('✅ Logout exitoso');
-      
-      return { success: true };
-    } catch (error) {
-      console.error('❌ Error durante logout:', error);
-      return { success: false, error };
-    }
-  };
+const logout = async () => {
+  try {
+    console.log('🔄 AuthContext: Iniciando logout...');
+    
+    // Promesa con timeout
+    const logoutPromise = supabase.auth.signOut();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Logout timeout')), 3000)
+    );
+    
+    // Race entre logout y timeout
+    await Promise.race([logoutPromise, timeoutPromise]);
+    
+    console.log('✅ AuthContext: Logout de Supabase exitoso');
+    
+    // Limpiar estado local inmediatamente
+    setUser(null);
+    setUserRole(null);
+    
+    // Limpiar storage
+    localStorage.clear();
+    sessionStorage.clear();
+    
+    console.log('✅ AuthContext: Estado limpiado');
+    
+    return { success: true };
+    
+  } catch (error) {
+    console.error('❌ AuthContext: Error en logout:', error);
+    
+    // Aunque falle Supabase, limpiar estado local
+    setUser(null);
+    setUserRole(null);
+    localStorage.clear();
+    sessionStorage.clear();
+    
+    console.log('🚨 AuthContext: Logout forzado por error');
+    
+    // Aún retornar success porque el usuario quedará deslogueado
+    return { success: true, error };
+  }
+};
 
   const value = {
     user,
