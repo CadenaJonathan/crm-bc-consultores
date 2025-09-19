@@ -1,6 +1,4 @@
-// Hook para gestión de clientes - CRUD completo
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { toast } from 'react-hot-toast';
 
@@ -8,6 +6,8 @@ export const useClients = () => {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  
+  // FILTROS SIN useEffect AUTOMÁTICO
   const [filters, setFilters] = useState({
     municipality: '',
     status: '',
@@ -15,22 +15,66 @@ export const useClients = () => {
     search: ''
   });
 
-  // Cargar clientes al montar el componente
-  useEffect(() => {
-    fetchClients();
-  }, []);
+  // Referencias para control de estado
+  const isFetchingRef = useRef(false);
+  const lastFetchRef = useRef(0);
+  const abortControllerRef = useRef(null);
+  const cacheRef = useRef(null);
+  
+  const CACHE_DURATION = 60000; // 1 minuto
+  const THROTTLE_TIME = 1000; // REDUCIDO a 1 segundo (era 3000)
 
-  // Aplicar filtros cuando cambien
-  useEffect(() => {
-    fetchClients();
-  }, [filters]);
+  // Función principal de carga - SIN dependencias de filtros
+  const fetchClients = useCallback(async (forceRefresh = false) => {
+    // Verificar caché
+    if (!forceRefresh && cacheRef.current) {
+      const cacheAge = Date.now() - cacheRef.current.timestamp;
+      if (cacheAge < CACHE_DURATION) {
+        console.log('📦 Usando clientes en caché');
+        setClients(cacheRef.current.data);
+        setLoading(false);
+        setError(null);
+        return;
+      }
+    }
 
-  const fetchClients = async () => {
+    // Evitar múltiples llamadas
+    if (isFetchingRef.current) {
+      console.log('⚠️ Ya hay carga de clientes en proceso');
+      return;
+    }
+
+    // Throttling REDUCIDO
+    const now = Date.now();
+    if (now - lastFetchRef.current < THROTTLE_TIME && !forceRefresh) {
+      console.log('⚠️ Carga de clientes muy frecuente, saltando... (esperando', THROTTLE_TIME, 'ms)');
+      return;
+    }
+
     try {
+      isFetchingRef.current = true;
+      lastFetchRef.current = now;
+      
       setLoading(true);
-      console.log('📊 Cargando clientes con filtros:', filters);
+      setError(null);
+      console.log('📊 Cargando clientes...');
 
-      let query = supabase
+      // Cancelar request anterior
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      
+      abortControllerRef.current = new AbortController();
+      const { signal } = abortControllerRef.current;
+
+      // Verificar sesión
+      const { error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        throw new Error('Sesión inválida. Recarga la página.');
+      }
+
+      // Query simple SIN filtros aplicados en la base de datos
+      const queryPromise = supabase
         .from('clients')
         .select(`
           id,
@@ -49,44 +93,79 @@ export const useClients = () => {
           created_at,
           updated_at
         `)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(200) // Limitar para mejor performance
+        .abortSignal(signal);
 
-      // Aplicar filtros
-      if (filters.municipality) {
-        query = query.eq('municipality', filters.municipality);
+      // Timeout MÁS CORTO - 5 segundos
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout de carga de clientes (5s)')), 5000);
+      });
+
+      const { data, error } = await Promise.race([
+        queryPromise,
+        timeoutPromise
+      ]);
+
+      if (signal.aborted) {
+        console.log('🚫 Carga de clientes cancelada');
+        return;
       }
-
-      if (filters.status) {
-        query = query.eq('status', filters.status);
-      }
-
-      if (filters.riskLevel) {
-        query = query.eq('risk_level', filters.riskLevel);
-      }
-
-      // Filtro de búsqueda por texto
-      if (filters.search) {
-        query = query.or(`name.ilike.%${filters.search}%,commercial_name.ilike.%${filters.search}%,rfc.ilike.%${filters.search}%`);
-      }
-
-      const { data, error } = await query;
 
       if (error) throw error;
 
+      console.log('✅ Clientes cargados:', data?.length || 0);
+      
+      // Guardar en caché
+      cacheRef.current = {
+        data: data || [],
+        timestamp: Date.now()
+      };
+
       setClients(data || []);
       setError(null);
-      
-      console.log('✅ Clientes cargados:', data?.length || 0);
 
     } catch (error) {
+      if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+        console.log('🚫 Carga cancelada');
+        return;
+      }
+
       console.error('❌ Error cargando clientes:', error);
       setError(error.message);
-      toast.error('Error al cargar clientes');
+      
+      // Fallback a caché si existe
+      if (cacheRef.current) {
+        console.log('📦 Usando caché como fallback');
+        setClients(cacheRef.current.data);
+      } else {
+        setClients([]);
+      }
+      
+      toast.error(`Error al cargar clientes: ${error.message}`);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
+      abortControllerRef.current = null;
     }
-  };
+  }, []); // SIN DEPENDENCIAS
 
+  // Aplicar filtros EN EL FRONTEND (no nueva query)
+  const filteredClients = clients.filter(client => {
+    if (filters.municipality && client.municipality !== filters.municipality) return false;
+    if (filters.status && client.status !== filters.status) return false;
+    if (filters.riskLevel && client.risk_level !== filters.riskLevel) return false;
+    if (filters.search) {
+      const searchLower = filters.search.toLowerCase();
+      const nameMatch = client.name?.toLowerCase().includes(searchLower);
+      const commercialNameMatch = client.commercial_name?.toLowerCase().includes(searchLower);
+      const rfcMatch = client.rfc?.toLowerCase().includes(searchLower);
+      if (!nameMatch && !commercialNameMatch && !rfcMatch) return false;
+    }
+    return true;
+  });
+
+  // CRUD Operations
   const createClient = async (clientData) => {
     try {
       console.log('➕ Creando cliente:', clientData);
@@ -102,8 +181,14 @@ export const useClients = () => {
 
       if (error) throw error;
 
-      // Actualizar lista local
+      // Actualizar estado local
       setClients(prev => [data, ...prev]);
+      
+      // Actualizar caché
+      if (cacheRef.current) {
+        cacheRef.current.data = [data, ...cacheRef.current.data];
+        cacheRef.current.timestamp = Date.now(); // Actualizar timestamp
+      }
       
       toast.success(`Cliente "${data.name}" creado exitosamente`);
       console.log('✅ Cliente creado:', data);
@@ -133,10 +218,18 @@ export const useClients = () => {
 
       if (error) throw error;
 
-      // Actualizar lista local
+      // Actualizar estado local
       setClients(prev => prev.map(client => 
         client.id === clientId ? data : client
       ));
+
+      // Actualizar caché
+      if (cacheRef.current) {
+        cacheRef.current.data = cacheRef.current.data.map(client =>
+          client.id === clientId ? data : client
+        );
+        cacheRef.current.timestamp = Date.now(); // Actualizar timestamp
+      }
 
       toast.success(`Cliente "${data.name}" actualizado exitosamente`);
       console.log('✅ Cliente actualizado:', data);
@@ -161,8 +254,16 @@ export const useClients = () => {
 
       if (error) throw error;
 
-      // Actualizar lista local
+      // Actualizar estado local
       setClients(prev => prev.filter(client => client.id !== clientId));
+
+      // Actualizar caché
+      if (cacheRef.current) {
+        cacheRef.current.data = cacheRef.current.data.filter(
+          client => client.id !== clientId
+        );
+        cacheRef.current.timestamp = Date.now(); // Actualizar timestamp
+      }
 
       toast.success('Cliente eliminado exitosamente');
       console.log('✅ Cliente eliminado:', clientId);
@@ -176,25 +277,70 @@ export const useClients = () => {
     }
   };
 
-  const updateFilters = (newFilters) => {
+  // Funciones de filtro - NO triggean nueva consulta
+  const updateFilters = useCallback((newFilters) => {
+    console.log('🔍 Actualizando filtros:', newFilters);
     setFilters(prev => ({
       ...prev,
       ...newFilters
     }));
-  };
+  }, []);
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
+    console.log('🧹 Limpiando filtros');
     setFilters({
       municipality: '',
       status: '',
       riskLevel: '',
       search: ''
     });
-  };
+  }, []);
 
-  const refreshClients = () => {
-    fetchClients();
-  };
+  // Función de refresco manual - RESET del throttling
+  const refreshClients = useCallback(() => {
+    console.log('🔄 Refresco manual de clientes - reseteando throttling');
+    lastFetchRef.current = 0; // RESET del throttling
+    fetchClients(true);
+  }, [fetchClients]);
+
+  // Manejar visibilidad de página - RESET del throttling
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && cacheRef.current) {
+        const cacheAge = Date.now() - cacheRef.current.timestamp;
+        if (cacheAge > CACHE_DURATION) {
+          console.log('👁️ Página visible, refrescando clientes...');
+          setTimeout(() => {
+            lastFetchRef.current = 0; // RESET throttling
+            fetchClients(true);
+          }, 1000);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [fetchClients]);
+
+  // Efecto principal - SOLO al montar
+  useEffect(() => {
+    console.log('🚀 useClients montado');
+    
+    // Delay inicial para evitar conflictos
+    const initTimeout = setTimeout(() => {
+      fetchClients(false);
+    }, 200); // Delay más largo que useDashboardStats
+
+    // Cleanup
+    return () => {
+      console.log('🧹 useClients limpiando...');
+      clearTimeout(initTimeout);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      isFetchingRef.current = false;
+    };
+  }, []); // SIN DEPENDENCIAS
 
   // Opciones para filtros
   const municipalities = [
@@ -234,7 +380,8 @@ export const useClients = () => {
   const statusOptions = ['active', 'inactive', 'suspended'];
 
   return {
-    clients,
+    clients: filteredClients, // Ya filtrados en el frontend
+    allClients: clients, // Todos los clientes sin filtrar
     loading,
     error,
     filters,
@@ -248,6 +395,7 @@ export const useClients = () => {
     updateFilters,
     clearFilters,
     refreshClients,
-    totalClients: clients.length
+    totalClients: clients.length,
+    filteredCount: filteredClients.length
   };
 };

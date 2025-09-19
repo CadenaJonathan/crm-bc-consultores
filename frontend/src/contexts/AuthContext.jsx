@@ -1,5 +1,5 @@
-// contexts/AuthContext.jsx - ACTUALIZADO
-import React, { createContext, useContext, useEffect, useState } from 'react';
+// contexts/AuthContext.jsx - CORREGIDO SIN LOOPS
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext({});
@@ -12,8 +12,24 @@ export const useAuth = () => {
   return context;
 };
 
-// Función para obtener el rol del usuario desde ambas tablas
+// Cache para roles - evitar consultas repetidas
+let roleCache = new Map();
+let lastCacheClean = Date.now();
+
+// Función para obtener el rol del usuario - CON CACHE
 const getUserRole = async (userEmail) => {
+  // Limpiar cache cada 10 minutos
+  if (Date.now() - lastCacheClean > 600000) {
+    roleCache.clear();
+    lastCacheClean = Date.now();
+  }
+
+  // Verificar cache primero
+  if (roleCache.has(userEmail)) {
+    console.log('📦 Usando rol en cache para:', userEmail);
+    return roleCache.get(userEmail);
+  }
+
   console.log('🔍 Buscando rol para:', userEmail);
   
   try {
@@ -24,31 +40,37 @@ const getUserRole = async (userEmail) => {
       .eq('email', userEmail)
       .single();
 
+    let userInfo;
+
     if (!adminError && adminUser) {
       console.log('✅ Usuario admin encontrado:', adminUser);
-      return {
+      userInfo = {
         role: adminUser.role,
         isActive: true,
         source: 'public'
       };
+    } else {
+      console.log('❌ No encontrado en public.users, es cliente por defecto');
+      userInfo = {
+        role: 'cliente',
+        isActive: true,
+        source: 'auth'
+      };
     }
 
-    console.log('❌ No encontrado en public.users, es cliente por defecto');
-
-    // 2. Si no está en public.users, es cliente por defecto
-    return {
-      role: 'cliente',
-      isActive: true,
-      source: 'auth'
-    };
+    // Guardar en cache
+    roleCache.set(userEmail, userInfo);
+    return userInfo;
 
   } catch (error) {
     console.error('❌ Error obteniendo rol:', error);
-    return {
+    const fallbackInfo = {
       role: 'cliente',
       isActive: true,
       source: 'auth'
     };
+    roleCache.set(userEmail, fallbackInfo);
+    return fallbackInfo;
   }
 };
 
@@ -56,17 +78,20 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
+  
+  // Referencias para evitar loops
+  const initRef = useRef(false);
+  const processingAuthRef = useRef(false);
+  const currentUserRef = useRef(null);
 
   // Función para verificar permisos
   const hasPermission = (requiredRole) => {
     if (!userRole) return false;
     
-    // Si requiredRole es un array, verificar si el userRole está incluido
     if (Array.isArray(requiredRole)) {
       return requiredRole.includes(userRole);
     }
     
-    // Lógica de permisos jerárquicos
     const roleHierarchy = {
       'cliente': ['cliente'],
       'admin': ['cliente', 'admin'],
@@ -77,123 +102,162 @@ export const AuthProvider = ({ children }) => {
     return userPermissions.includes(requiredRole);
   };
 
-  // Verificar sesión actual
+  // Función para procesar usuario autenticado
+  const processAuthenticatedUser = async (userEmail) => {
+    // Evitar procesamiento múltiple del mismo usuario
+    if (processingAuthRef.current || currentUserRef.current === userEmail) {
+      console.log('⚠️ Ya procesando usuario o usuario ya procesado:', userEmail);
+      return;
+    }
+
+    try {
+      processingAuthRef.current = true;
+      console.log('🔄 Procesando usuario autenticado:', userEmail);
+
+      const userInfo = await getUserRole(userEmail);
+      
+      setUser(userEmail);
+      setUserRole(userInfo.role);
+      currentUserRef.current = userEmail;
+      
+      console.log('✅ Usuario procesado:', {
+        email: userEmail,
+        role: userInfo.role,
+        source: userInfo.source
+      });
+
+    } catch (error) {
+      console.error('❌ Error procesando usuario:', error);
+      setUser(null);
+      setUserRole(null);
+      currentUserRef.current = null;
+    } finally {
+      processingAuthRef.current = false;
+    }
+  };
+
+  // Función para limpiar usuario
+  const clearUser = () => {
+    console.log('🧹 Limpiando usuario');
+    setUser(null);
+    setUserRole(null);
+    currentUserRef.current = null;
+    processingAuthRef.current = false;
+  };
+
+  // Verificar sesión inicial - SOLO UNA VEZ
   useEffect(() => {
-    const getSession = async () => {
+    if (initRef.current) return;
+    initRef.current = true;
+
+    const initializeAuth = async () => {
       try {
+        console.log('🚀 Inicializando AuthContext...');
         setLoading(true);
         
         const { data: { session }, error } = await supabase.auth.getSession();
         
         if (error) {
-          console.error('Error obteniendo sesión:', error);
-          setUser(null);
-          setUserRole(null);
+          console.error('❌ Error obteniendo sesión inicial:', error);
+          clearUser();
           return;
         }
 
-        if (session?.user) {
-          console.log('✅ Sesión activa para:', session.user.email);
-          
-          // Obtener rol del usuario
-          const userInfo = await getUserRole(session.user.email);
-          
-          setUser(session.user.email);
-          setUserRole(userInfo.role);
-          
-          console.log('✅ Usuario autenticado:', {
-            email: session.user.email,
-            role: userInfo.role,
-            source: userInfo.source
-          });
+        if (session?.user?.email) {
+          console.log('✅ Sesión inicial encontrada para:', session.user.email);
+          await processAuthenticatedUser(session.user.email);
         } else {
-          console.log('❌ No hay sesión activa');
-          setUser(null);
-          setUserRole(null);
+          console.log('❌ No hay sesión inicial activa');
+          clearUser();
         }
+
       } catch (error) {
-        console.error('❌ Error en getSession:', error);
-        setUser(null);
-        setUserRole(null);
+        console.error('❌ Error en inicialización:', error);
+        clearUser();
       } finally {
         setLoading(false);
       }
     };
 
-    getSession();
+    initializeAuth();
+  }, []);
 
-    // Escuchar cambios de autenticación
+  // Escuchar cambios de autenticación - CON FILTROS PARA EVITAR LOOPS
+  useEffect(() => {
+    if (!initRef.current) return;
+
+    console.log('👂 Configurando listener de auth state changes...');
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('🔄 Cambio de auth state:', event);
+        console.log('🔄 Auth state change:', event, session?.user?.email || 'no user');
         
-        if (event === 'SIGNED_IN' && session?.user) {
-          console.log('✅ Usuario conectado:', session.user.email);
-          
-          const userInfo = await getUserRole(session.user.email);
-          
-          setUser(session.user.email);
-          setUserRole(userInfo.role);
-          
-          console.log('✅ Rol asignado:', userInfo.role);
+        // FILTRAR eventos que pueden causar loops
+        if (event === 'TOKEN_REFRESHED') {
+          console.log('🔄 Token refresh ignorado para evitar loops');
+          return;
+        }
+
+        // Procesar solo eventos importantes
+        if (event === 'SIGNED_IN' && session?.user?.email) {
+          // Solo procesar si es diferente al usuario actual
+          if (currentUserRef.current !== session.user.email) {
+            console.log('✅ Nuevo usuario conectado:', session.user.email);
+            await processAuthenticatedUser(session.user.email);
+          } else {
+            console.log('👤 Usuario ya procesado, ignorando SIGNED_IN');
+          }
         } else if (event === 'SIGNED_OUT') {
           console.log('❌ Usuario desconectado');
-          setUser(null);
-          setUserRole(null);
+          clearUser();
+          roleCache.clear(); // Limpiar cache al logout
         }
       }
     );
 
     return () => {
+      console.log('🧹 Limpiando subscription de auth');
       subscription?.unsubscribe();
     };
-  }, []);
+  }, []); // Sin dependencias para evitar re-creación
 
-  // FUNCIÓN DE LOGOUT MEJORADA EN AuthContext.jsx
-
-
-const logout = async () => {
-  try {
-    console.log('🔄 AuthContext: Iniciando logout...');
-    
-    // Promesa con timeout
-    const logoutPromise = supabase.auth.signOut();
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Logout timeout')), 3000)
-    );
-    
-    // Race entre logout y timeout
-    await Promise.race([logoutPromise, timeoutPromise]);
-    
-    console.log('✅ AuthContext: Logout de Supabase exitoso');
-    
-    // Limpiar estado local inmediatamente
-    setUser(null);
-    setUserRole(null);
-    
-    // Limpiar storage
-    localStorage.clear();
-    sessionStorage.clear();
-    
-    console.log('✅ AuthContext: Estado limpiado');
-    
-    return { success: true };
-    
-  } catch (error) {
-    console.error('❌ AuthContext: Error en logout:', error);
-    
-    // Aunque falle Supabase, limpiar estado local
-    setUser(null);
-    setUserRole(null);
-    localStorage.clear();
-    sessionStorage.clear();
-    
-    console.log('🚨 AuthContext: Logout forzado por error');
-    
-    // Aún retornar success porque el usuario quedará deslogueado
-    return { success: true, error };
-  }
-};
+  // Función de logout mejorada
+  const logout = async () => {
+    try {
+      console.log('🔄 AuthContext: Iniciando logout...');
+      
+      // Limpiar estado local primero
+      clearUser();
+      roleCache.clear();
+      
+      // Logout de Supabase con timeout
+      const logoutPromise = supabase.auth.signOut();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Logout timeout')), 3000)
+      );
+      
+      await Promise.race([logoutPromise, timeoutPromise]);
+      
+      console.log('✅ AuthContext: Logout exitoso');
+      
+      // Limpiar storage
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      return { success: true };
+      
+    } catch (error) {
+      console.error('❌ AuthContext: Error en logout:', error);
+      
+      // Aún limpiar todo localmente
+      clearUser();
+      roleCache.clear();
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      return { success: true, error };
+    }
+  };
 
   const value = {
     user,
@@ -204,13 +268,17 @@ const logout = async () => {
     logout
   };
 
-  // Debug: Mostrar estado actual
-  console.log('🎛️ AuthContext state:', {
-    user,
-    userRole,
-    loading,
-    isAuthenticated: !!user
-  });
+  // Debug state - SOLO en desarrollo
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🎛️ AuthContext state:', {
+      user,
+      userRole,
+      loading,
+      isAuthenticated: !!user,
+      isProcessing: processingAuthRef.current,
+      currentUser: currentUserRef.current
+    });
+  }
 
   return (
     <AuthContext.Provider value={value}>
