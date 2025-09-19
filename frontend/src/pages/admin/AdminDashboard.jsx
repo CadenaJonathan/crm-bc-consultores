@@ -6,6 +6,8 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase'; // ← IMPORTANTE: Agregar este import
 import { toast } from 'react-hot-toast';
+import { useDashboardStats } from '../../hooks/useDashboardStats';
+import { useClients } from '../../hooks/useClients';
 import { 
   Home, 
   Users, 
@@ -35,28 +37,98 @@ import {
 
 // Componentes de páginas del dashboard admin
 const AdminDashboardHome = () => {
+  const { 
+    totalClients,
+    activeClients,
+    totalDocuments,
+    approvedDocuments,
+    pendingDocuments,
+    expiredDocuments,
+    documentsExpiringSoon,
+    recentActivity,
+    loading,
+    error,
+    refreshStats
+  } = useDashboardStats();
+
   const { userRole } = useAuth();
-  
+
+  // Mostrar loading
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+            <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="bg-gray-50 rounded-lg p-6">
+                  <div className="h-8 bg-gray-200 rounded mb-4"></div>
+                  <div className="h-12 bg-gray-200 rounded"></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Mostrar error
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <div className="flex items-center">
+            <AlertTriangle className="h-5 w-5 text-red-500 mr-2" />
+            <h3 className="text-lg font-medium text-red-900">Error al cargar estadísticas</h3>
+          </div>
+          <p className="text-red-700 mt-2">{error}</p>
+          <button 
+            onClick={refreshStats}
+            className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header con botón de actualizar */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">
-          Panel de Administración
-        </h2>
-        <p className="text-gray-600 mb-6">
-          Gestiona el sistema CRM de Protección Civil
-        </p>
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Panel de Administración
+            </h2>
+            <p className="text-gray-600">
+              Gestiona el sistema CRM de Protección Civil
+            </p>
+          </div>
+          <button
+            onClick={refreshStats}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+          >
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Actualizar
+          </button>
+        </div>
         
-        {/* Estadísticas principales */}
+        {/* Estadísticas principales CON DATOS REALES */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <div className="bg-blue-50 rounded-lg p-6 border border-blue-200">
             <div className="flex items-center">
               <Users className="h-8 w-8 text-blue-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-blue-600">Total Clientes</p>
-                <p className="text-2xl font-bold text-blue-900">-</p>
-                <p className="text-xs text-blue-500">Activos en el sistema</p>
+                <p className="text-2xl font-bold text-blue-900">{totalClients}</p>
+                <p className="text-xs text-blue-500">
+                  {activeClients} activos de {totalClients} total
+                </p>
               </div>
             </div>
           </div>
@@ -66,8 +138,10 @@ const AdminDashboardHome = () => {
               <CheckCircle className="h-8 w-8 text-green-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-green-600">Docs. Aprobados</p>
-                <p className="text-2xl font-bold text-green-900">-</p>
-                <p className="text-xs text-green-500">Este mes</p>
+                <p className="text-2xl font-bold text-green-900">{approvedDocuments}</p>
+                <p className="text-xs text-green-500">
+                  De {totalDocuments} documentos totales
+                </p>
               </div>
             </div>
           </div>
@@ -77,7 +151,7 @@ const AdminDashboardHome = () => {
               <Clock className="h-8 w-8 text-yellow-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-yellow-600">Pendientes</p>
-                <p className="text-2xl font-bold text-yellow-900">-</p>
+                <p className="text-2xl font-bold text-yellow-900">{pendingDocuments}</p>
                 <p className="text-xs text-yellow-500">Requieren revisión</p>
               </div>
             </div>
@@ -88,15 +162,27 @@ const AdminDashboardHome = () => {
               <AlertTriangle className="h-8 w-8 text-red-600" />
               <div className="ml-4">
                 <p className="text-sm font-medium text-red-600">Por Vencer</p>
-                <p className="text-2xl font-bold text-red-900">-</p>
+                <p className="text-2xl font-bold text-red-900">{documentsExpiringSoon}</p>
                 <p className="text-xs text-red-500">Próximos 30 días</p>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Estadísticas adicionales */}
+        {expiredDocuments > 0 && (
+          <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <AlertTriangle className="h-5 w-5 text-red-600 mr-2" />
+              <span className="text-red-800 font-medium">
+                ⚠️ {expiredDocuments} documentos vencidos requieren atención inmediata
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Acciones rápidas */}
+      {/* Acciones rápidas y Actividad reciente */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4">Acciones Rápidas</h3>
@@ -124,121 +210,413 @@ const AdminDashboardHome = () => {
               </div>
               <span className="text-xs text-gray-500">→</span>
             </button>
+
+            {pendingDocuments > 0 && (
+              <button className="w-full flex items-center justify-between p-3 border border-orange-200 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors">
+                <div className="flex items-center">
+                  <Clock className="h-5 w-5 text-orange-600 mr-3" />
+                  <span className="text-sm font-medium text-orange-700">
+                    Revisar {pendingDocuments} pendientes
+                  </span>
+                </div>
+                <span className="text-xs text-orange-500">→</span>
+              </button>
+            )}
           </div>
         </div>
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Actividad Reciente</h3>
-          <div className="space-y-3">
-            <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-              <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-700">Documento aprobado</p>
-                <p className="text-xs text-gray-500">Hace 2 horas</p>
-              </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Actividad Reciente
+            {recentActivity.length === 0 && (
+              <span className="text-sm text-gray-500 font-normal ml-2">(No hay actividad)</span>
+            )}
+          </h3>
+          
+          {recentActivity.length > 0 ? (
+            <div className="space-y-3">
+              {recentActivity.map((activity, index) => (
+                <div key={activity.id || index} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div className={`w-2 h-2 rounded-full ${
+                    activity.color === 'green' ? 'bg-green-400' :
+                    activity.color === 'blue' ? 'bg-blue-400' :
+                    activity.color === 'yellow' ? 'bg-yellow-400' :
+                    'bg-gray-400'
+                  }`}></div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-700">{activity.message}</p>
+                    <p className="text-xs text-gray-500">{activity.time}</p>
+                  </div>
+                </div>
+              ))}
             </div>
-            
-            <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-              <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-700">Nuevo cliente registrado</p>
-                <p className="text-xs text-gray-500">Hace 5 horas</p>
-              </div>
+          ) : (
+            <div className="text-center py-8">
+              <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-500">No hay actividad reciente</p>
+              <p className="text-sm text-gray-400 mt-1">
+                La actividad aparecerá aquí cuando haya clientes y documentos
+              </p>
             </div>
-            
-            <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-              <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-700">Documento por vencer</p>
-                <p className="text-xs text-gray-500">Hace 1 día</p>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-const GestionClientes = () => (
-  <div className="space-y-6">
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Gestión de Clientes</h2>
-          <p className="text-gray-600">Administra todos los clientes del sistema</p>
-        </div>
-        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center">
-          <Plus className="h-4 w-4 mr-2" />
-          Nuevo Cliente
-        </button>
-      </div>
+const GestionClientes = () => {
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  
+  // Estados para filtros SIN persistencia por ahora
+  const [filters, setFilters] = useState({
+    municipality: '',
+    status: '',
+    riskLevel: '',
+    search: ''
+  });
+
+  // Cargar clientes al montar - SIN FILTROS INICIALMENTE
+  useEffect(() => {
+    fetchClients();
+  }, []);
+
+  // Función de carga SIMPLIFICADA
+  const fetchClients = async () => {
+    try {
+      setLoading(true);
+      setError(null);
       
-      {/* Filtros */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Municipio</label>
-          <select className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-            <option>Todos los municipios</option>
-            <option>San Juan del Río</option>
-            <option>El Marqués</option>
-            <option>Querétaro</option>
-          </select>
-        </div>
-        
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Estado</label>
-          <select className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-            <option>Todos los estados</option>
-            <option>Activo</option>
-            <option>Inactivo</option>
-            <option>Suspendido</option>
-          </select>
-        </div>
-        
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Riesgo</label>
-          <select className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-            <option>Todos los niveles</option>
-            <option>Alto</option>
-            <option>Medio</option>
-            <option>Bajo</option>
-          </select>
-        </div>
-        
-        <div className="flex items-end">
-          <button className="w-full bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors">
-            Aplicar Filtros
-          </button>
+      console.log('📊 Iniciando carga simple de clientes...');
+
+      // Verificar conexión primero
+      const { error: connectionError } = await supabase.auth.getSession();
+      if (connectionError) {
+        console.error('❌ Error de conexión:', connectionError);
+        throw new Error('Error de conexión. Recarga la página.');
+      }
+
+      // Query más simple
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, name, rfc, municipality, business_type, risk_level, status, created_at')
+        .order('created_at', { ascending: false })
+        .limit(50); // Limitar resultados
+
+      if (error) {
+        console.error('❌ Error de Supabase:', error);
+        throw new Error(`Error: ${error.message}`);
+      }
+
+      console.log('✅ Clientes cargados:', data?.length || 0);
+      setClients(data || []);
+
+    } catch (error) {
+      console.error('❌ Error en fetchClients:', error);
+      setError(error.message);
+      setClients([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Aplicar filtros EN EL FRONTEND (no en la base de datos)
+  const filteredClients = clients.filter(client => {
+    if (filters.municipality && client.municipality !== filters.municipality) return false;
+    if (filters.status && client.status !== filters.status) return false;
+    if (filters.riskLevel && client.risk_level !== filters.riskLevel) return false;
+    if (filters.search) {
+      const searchLower = filters.search.toLowerCase();
+      const nameMatch = client.name?.toLowerCase().includes(searchLower);
+      const rfcMatch = client.rfc?.toLowerCase().includes(searchLower);
+      if (!nameMatch && !rfcMatch) return false;
+    }
+    return true;
+  });
+
+  const handleFilterChange = (filterName, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [filterName]: value
+    }));
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      municipality: '',
+      status: '',
+      riskLevel: '',
+      search: ''
+    });
+  };
+
+  // Resto de funciones y opciones (mantener las existentes)
+  const municipalities = ['San Juan del Río', 'El Marqués', 'Querétaro', 'Tequisquiapan', 'Corregidora'];
+  const riskLevels = ['bajo', 'medio', 'alto'];
+  const statusOptions = ['active', 'inactive', 'suspended'];
+
+  const formatBusinessType = (type) => {
+    const types = {
+      'educativo': 'Educativo',
+      'industrial': 'Industrial',
+      'turistico_hospedaje_alimentos': 'Turístico',
+      'comercial': 'Comercial',
+      'hidrocarburos': 'Hidrocarburos',
+      'medico_hospitalario': 'Médico',
+      'rehabilitacion_adicciones': 'Rehabilitación',
+      'construccion': 'Construcción',
+      'servicios_generales': 'Servicios'
+    };
+    return types[type] || type;
+  };
+
+  const formatRiskLevel = (level) => {
+    const levels = {
+      'bajo': { text: 'Bajo', color: 'bg-green-100 text-green-800' },
+      'medio': { text: 'Medio', color: 'bg-yellow-100 text-yellow-800' },
+      'alto': { text: 'Alto', color: 'bg-red-100 text-red-800' }
+    };
+    return levels[level] || { text: level, color: 'bg-gray-100 text-gray-800' };
+  };
+
+  const formatStatus = (status) => {
+    const statuses = {
+      'active': { text: 'Activo', color: 'bg-green-100 text-green-800' },
+      'inactive': { text: 'Inactivo', color: 'bg-gray-100 text-gray-800' },
+      'suspended': { text: 'Suspendido', color: 'bg-red-100 text-red-800' }
+    };
+    return statuses[status] || { text: status, color: 'bg-gray-100 text-gray-800' };
+  };
+
+  const hasActiveFilters = Object.values(filters).some(value => value);
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <div className="flex items-center">
+            <AlertTriangle className="h-5 w-5 text-red-500 mr-2" />
+            <h3 className="text-lg font-medium text-red-900">Error al cargar clientes</h3>
+          </div>
+          <p className="text-red-700 mt-2">{error}</p>
+          <div className="mt-4 flex space-x-2">
+            <button 
+              onClick={fetchClients}
+              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+            >
+              Reintentar
+            </button>
+            <button 
+              onClick={() => window.location.reload()}
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              Recargar Página
+            </button>
+          </div>
         </div>
       </div>
-      
-      {/* Tabla de clientes */}
-      <div className="border border-gray-200 rounded-lg overflow-hidden">
-        <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
-          <div className="grid grid-cols-6 gap-4 text-sm font-medium text-gray-700">
-            <div>Cliente</div>
-            <div>Municipio</div>
-            <div>Giro</div>
-            <div>Riesgo</div>
-            <div>Estado</div>
-            <div>Acciones</div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Gestión de Clientes</h2>
+            <p className="text-gray-600">
+              {filteredClients.length} de {clients.length} clientes
+              {hasActiveFilters && (
+                <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                  Filtrado
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="flex space-x-2">
+            <button 
+              onClick={fetchClients}
+              disabled={loading}
+              className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors flex items-center disabled:opacity-50"
+            >
+              <BarChart3 className="h-4 w-4 mr-2" />
+              {loading ? 'Cargando...' : 'Actualizar'}
+            </button>
+            <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center">
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Cliente
+            </button>
           </div>
         </div>
         
-        {/* Placeholder para datos */}
-        <div className="p-12 text-center">
-          <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No hay clientes registrados</h3>
-          <p className="text-gray-500 mb-4">Los clientes aparecerán aquí una vez que sean agregados</p>
-          <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
-            Agregar Primer Cliente
-          </button>
+        {/* Filtros */}
+        <div className="mb-6">
+          <div className="relative mb-4">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Buscar por nombre o RFC..."
+              value={filters.search}
+              onChange={(e) => handleFilterChange('search', e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <select 
+              value={filters.municipality}
+              onChange={(e) => handleFilterChange('municipality', e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Todos los municipios</option>
+              {municipalities.map(municipality => (
+                <option key={municipality} value={municipality}>
+                  {municipality}
+                </option>
+              ))}
+            </select>
+            
+            <select 
+              value={filters.status}
+              onChange={(e) => handleFilterChange('status', e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Todos los estados</option>
+              {statusOptions.map(status => {
+                const formatted = formatStatus(status);
+                return (
+                  <option key={status} value={status}>
+                    {formatted.text}
+                  </option>
+                );
+              })}
+            </select>
+            
+            <select 
+              value={filters.riskLevel}
+              onChange={(e) => handleFilterChange('riskLevel', e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Todos los niveles</option>
+              {riskLevels.map(level => {
+                const formatted = formatRiskLevel(level);
+                return (
+                  <option key={level} value={level}>
+                    {formatted.text}
+                  </option>
+                );
+              })}
+            </select>
+            
+            <button 
+              onClick={clearFilters}
+              className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Limpiar Filtros
+            </button>
+          </div>
+        </div>
+        
+        {/* Tabla */}
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+            <div className="grid grid-cols-6 gap-4 text-sm font-medium text-gray-700">
+              <div>Cliente</div>
+              <div>RFC</div>
+              <div>Municipio</div>
+              <div>Giro</div>
+              <div>Riesgo</div>
+              <div>Estado</div>
+            </div>
+          </div>
+          
+          {loading ? (
+            <div className="p-6">
+              <div className="animate-pulse space-y-4">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="grid grid-cols-6 gap-4">
+                    <div className="h-4 bg-gray-200 rounded"></div>
+                    <div className="h-4 bg-gray-200 rounded"></div>
+                    <div className="h-4 bg-gray-200 rounded"></div>
+                    <div className="h-4 bg-gray-200 rounded"></div>
+                    <div className="h-4 bg-gray-200 rounded"></div>
+                    <div className="h-4 bg-gray-200 rounded"></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : filteredClients.length === 0 ? (
+            <div className="p-12 text-center">
+              <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                {hasActiveFilters ? 'No hay clientes que coincidan' : 'No hay clientes registrados'}
+              </h3>
+              <p className="text-gray-500 mb-4">
+                {hasActiveFilters 
+                  ? 'Prueba ajustando los filtros de búsqueda' 
+                  : 'Los clientes aparecerán aquí una vez que sean agregados'
+                }
+              </p>
+              {hasActiveFilters && (
+                <button 
+                  onClick={clearFilters}
+                  className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors mr-2"
+                >
+                  Limpiar Filtros
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-200">
+              {filteredClients.map(client => {
+                const riskFormatted = formatRiskLevel(client.risk_level);
+                const statusFormatted = formatStatus(client.status);
+                
+                return (
+                  <div key={client.id} className="px-6 py-4 hover:bg-gray-50">
+                    <div className="grid grid-cols-6 gap-4 items-center">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {client.name}
+                        </p>
+                      </div>
+                      
+                      <div className="text-sm text-gray-900 font-mono">
+                        {client.rfc}
+                      </div>
+                      
+                      <div className="text-sm text-gray-500">
+                        {client.municipality}
+                      </div>
+                      
+                      <div className="text-sm text-gray-500">
+                        {formatBusinessType(client.business_type)}
+                      </div>
+                      
+                      <div>
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${riskFormatted.color}`}>
+                          {riskFormatted.text}
+                        </span>
+                      </div>
+                      
+                      <div>
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusFormatted.color}`}>
+                          {statusFormatted.text}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const GestionDocumentos = () => (
   <div className="space-y-6">
