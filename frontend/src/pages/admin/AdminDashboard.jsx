@@ -35,7 +35,11 @@ import {
   Eye,
   Activity,
   PieChart,
-  Target
+  Target,
+  Upload,        // ← Agregar este
+  RotateCcw,     // ← Y este
+  XCircle,       // ← Y este
+  FileCheck      // ← Y este
 } from 'lucide-react';
 
 // Estado global persistente (mantener igual)
@@ -189,11 +193,11 @@ const loadAppData = async (forceRefresh = false) => {
         loadPromise: null
       };
 
-      console.log('✅ Datos actualizados exitosamente:', stats);
+      console.log('Datos actualizados exitosamente:', stats);
       return appData;
 
     } catch (error) {
-      console.error('❌ Error cargando datos:', error);
+      console.error('Error cargando datos:', error);
       appData.stats = {
         ...appData.stats,
         loading: false,
@@ -946,15 +950,1063 @@ const GestionClientes = () => {
   );
 };
 
-// Mantener otros componentes simples (sin cambios)
-const GestionDocumentos = () => (
-  <div className="space-y-6">
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">Gestión de Documentos</h2>
-      <p className="text-gray-600">Módulo en desarrollo</p>
+///////////////////////////////////////////////
+
+// Estado global para documentos
+let documentsData = {
+  documents: [],
+  documentTypes: [],
+  clients: [],
+  lastUpdate: 0,
+  isLoading: false,
+  loadPromise: null
+};
+
+// Función para cargar datos de documentos
+const loadDocumentsData = async (forceRefresh = false) => {
+  if (documentsData.loadPromise && !forceRefresh) {
+    try {
+      return await documentsData.loadPromise;
+    } catch (error) {
+      console.log('Error en carga anterior, reintentando...');
+    }
+  }
+
+  const dataAge = Date.now() - documentsData.lastUpdate;
+  const needsUpdate = forceRefresh || dataAge > 180000 || documentsData.documents.length === 0; // 3 minutos
+
+  if (!needsUpdate) {
+    console.log('📄 Usando documentos en caché');
+    return documentsData;
+  }
+
+  documentsData.loadPromise = (async () => {
+    try {
+      documentsData.isLoading = true;
+      console.log('📄 Cargando datos de documentos...');
+
+      const { error: connectionError } = await supabase.auth.getSession();
+      if (connectionError) {
+        throw new Error('Error de conexión: ' + connectionError.message);
+      }
+
+      // Consultas en paralelo
+      const [documentsResult, documentTypesResult, clientsResult] = await Promise.all([
+        supabase
+          .from('documents')
+          .select(`
+            *,
+            clients!inner(id, name, rfc, municipality, business_type, risk_level),
+            document_types!inner(id, name, code, category),
+            reviewed_by_user:users!reviewed_by(email)
+          `)
+          .order('created_at', { ascending: false })
+          .limit(200),
+        
+        supabase
+          .from('document_types')
+          .select('*')
+          .order('code'),
+        
+        supabase
+          .from('clients')
+          .select('id, name, rfc, municipality, business_type, risk_level, status')
+          .eq('status', 'active')
+          .order('name')
+      ]);
+
+      if (documentsResult.error) throw new Error('Error documentos: ' + documentsResult.error.message);
+      if (documentTypesResult.error) throw new Error('Error tipos: ' + documentTypesResult.error.message);
+      if (clientsResult.error) throw new Error('Error clientes: ' + clientsResult.error.message);
+
+      documentsData = {
+        documents: documentsResult.data || [],
+        documentTypes: documentTypesResult.data || [],
+        clients: clientsResult.data || [],
+        lastUpdate: Date.now(),
+        isLoading: false,
+        loadPromise: null
+      };
+
+      console.log('✅ Documentos cargados:', documentsData.documents.length);
+      return documentsData;
+
+    } catch (error) {
+      console.error('❌ Error cargando documentos:', error);
+      documentsData.isLoading = false;
+      documentsData.loadPromise = null;
+      throw error;
+    }
+  })();
+
+  return documentsData.loadPromise;
+};
+
+// Hook para gestión de documentos
+const useDocuments = () => {
+  const [data, setData] = useState(documentsData);
+  const [error, setError] = useState(null);
+  const initRef = useRef(false);
+  const { user } = useAuth();
+
+  const refresh = async (force = false) => {
+    try {
+      setError(null);
+      const newData = await loadDocumentsData(force);
+      setData({ ...newData });
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+    if (user) {
+      refresh(false);
+    }
+  }, [user]);
+
+  return { data, error, refresh };
+};
+
+// Componente principal de gestión de documentos
+const GestionDocumentos = () => {
+  const { data, error, refresh } = useDocuments();
+  const { userRole } = useAuth();
+  const [filters, setFilters] = useState({
+    search: '',
+    status: '',
+    client: '',
+    documentType: '',
+    dateRange: ''
+  });
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+
+  // Aplicar filtros
+  const filteredDocuments = data.documents.filter(doc => {
+    const matchesSearch = !filters.search || 
+      doc.name?.toLowerCase().includes(filters.search.toLowerCase()) ||
+      doc.clients?.name?.toLowerCase().includes(filters.search.toLowerCase()) ||
+      doc.clients?.rfc?.toLowerCase().includes(filters.search.toLowerCase());
+    
+    const matchesStatus = !filters.status || doc.status === filters.status;
+    const matchesClient = !filters.client || doc.client_id === filters.client;
+    const matchesType = !filters.documentType || doc.document_type_id === filters.documentType;
+
+    return matchesSearch && matchesStatus && matchesClient && matchesType;
+  });
+
+  const clearFilters = () => {
+    setFilters({
+      search: '',
+      status: '',
+      client: '',
+      documentType: '',
+      dateRange: ''
+    });
+  };
+
+  const hasActiveFilters = Object.values(filters).some(value => value);
+
+  // Estadísticas rápidas
+  const stats = {
+    total: data.documents.length,
+    pending: data.documents.filter(d => d.status === 'pending').length,
+    approved: data.documents.filter(d => d.status === 'approved').length,
+    rejected: data.documents.filter(d => d.status === 'rejected').length,
+    expired: data.documents.filter(d => d.status === 'expired').length
+  };
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <div className="flex items-center">
+            <AlertTriangle className="h-5 w-5 text-red-500 mr-2" />
+            <h3 className="text-lg font-medium text-red-900">Error al cargar documentos</h3>
+          </div>
+          <p className="text-red-700 mt-2">{error}</p>
+          <button onClick={() => refresh(true)} className="mt-4 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header con estadísticas */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Gestión de Documentos</h2>
+            <p className="text-gray-600">
+              {filteredDocuments.length} de {data.documents.length} documentos
+              {hasActiveFilters && (
+                <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                  Filtrado
+                </span>
+              )}
+            </p>
+          </div>
+          
+          <div className="flex space-x-2">
+            <button 
+              onClick={() => setShowFilters(!showFilters)}
+              className={`px-4 py-2 rounded-lg border flex items-center ${
+                hasActiveFilters 
+                  ? 'bg-blue-50 border-blue-300 text-blue-700' 
+                  : 'bg-gray-50 border-gray-300 text-gray-700'
+              } hover:bg-blue-100`}
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              Filtros {hasActiveFilters && `(${Object.values(filters).filter(Boolean).length})`}
+            </button>
+            
+            <button onClick={() => refresh(true)} className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 flex items-center">
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Actualizar
+            </button>
+            
+            <button 
+              onClick={() => setShowUploadModal(true)}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center"
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              Subir Documento
+            </button>
+          </div>
+        </div>
+
+        {/* Métricas rápidas */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="bg-gray-50 rounded-lg p-4 text-center">
+            <FileText className="h-6 w-6 text-gray-600 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
+            <div className="text-sm text-gray-500">Total</div>
+          </div>
+          
+          <div className="bg-yellow-50 rounded-lg p-4 text-center border border-yellow-200">
+            <Clock className="h-6 w-6 text-yellow-600 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-yellow-900">{stats.pending}</div>
+            <div className="text-sm text-yellow-600">Pendientes</div>
+          </div>
+          
+          <div className="bg-green-50 rounded-lg p-4 text-center border border-green-200">
+            <CheckCircle className="h-6 w-6 text-green-600 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-green-900">{stats.approved}</div>
+            <div className="text-sm text-green-600">Aprobados</div>
+          </div>
+          
+          <div className="bg-red-50 rounded-lg p-4 text-center border border-red-200">
+            <XCircle className="h-6 w-6 text-red-600 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-red-900">{stats.rejected}</div>
+            <div className="text-sm text-red-600">Rechazados</div>
+          </div>
+          
+          <div className="bg-orange-50 rounded-lg p-4 text-center border border-orange-200">
+            <AlertTriangle className="h-6 w-6 text-orange-600 mx-auto mb-2" />
+            <div className="text-2xl font-bold text-orange-900">{stats.expired}</div>
+            <div className="text-sm text-orange-600">Vencidos</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Panel de filtros */}
+      {showFilters && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Buscar</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Nombre, cliente, RFC..."
+                  value={filters.search}
+                  onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Estado</label>
+              <select 
+                value={filters.status}
+                onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              >
+                <option value="">Todos los estados</option>
+                <option value="pending">Pendiente</option>
+                <option value="under_review">En Revisión</option>
+                <option value="approved">Aprobado</option>
+                <option value="rejected">Rechazado</option>
+                <option value="expired">Vencido</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+              <select 
+                value={filters.client}
+                onChange={(e) => setFilters(prev => ({ ...prev, client: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              >
+                <option value="">Todos los clientes</option>
+                {data.clients.map(client => (
+                  <option key={client.id} value={client.id}>
+                    {client.name} ({client.rfc})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Documento</label>
+              <select 
+                value={filters.documentType}
+                onChange={(e) => setFilters(prev => ({ ...prev, documentType: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              >
+                <option value="">Todos los tipos</option>
+                {data.documentTypes.map(type => (
+                  <option key={type.id} value={type.id}>
+                    {type.code} - {type.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="md:col-span-2 lg:col-span-1 flex items-end">
+              <button 
+                onClick={clearFilters}
+                disabled={!hasActiveFilters}
+                className="w-full bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              >
+                Limpiar Filtros
+              </button>
+            </div>
+          </div>
+
+          {/* Filtros activos */}
+          {hasActiveFilters && (
+            <div className="flex flex-wrap gap-2 pt-4 border-t border-gray-200">
+              {filters.search && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  Búsqueda: "{filters.search}"
+                  <button onClick={() => setFilters(prev => ({ ...prev, search: '' }))} className="ml-1 text-blue-600 hover:text-blue-800">×</button>
+                </span>
+              )}
+              {filters.status && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                  Estado: {filters.status}
+                  <button onClick={() => setFilters(prev => ({ ...prev, status: '' }))} className="ml-1 text-yellow-600 hover:text-yellow-800">×</button>
+                </span>
+              )}
+              {filters.client && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  Cliente: {data.clients.find(c => c.id === filters.client)?.name}
+                  <button onClick={() => setFilters(prev => ({ ...prev, client: '' }))} className="ml-1 text-green-600 hover:text-green-800">×</button>
+                </span>
+              )}
+              {filters.documentType && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                  Tipo: {data.documentTypes.find(t => t.id === filters.documentType)?.code}
+                  <button onClick={() => setFilters(prev => ({ ...prev, documentType: '' }))} className="ml-1 text-purple-600 hover:text-purple-800">×</button>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Lista de documentos */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        {filteredDocuments.length === 0 ? (
+          <div className="p-12 text-center">
+            <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              {data.documents.length === 0 ? 'No hay documentos registrados' : 'No hay documentos que coincidan'}
+            </h3>
+            <p className="text-gray-500 mb-4">
+              {data.documents.length === 0 
+                ? 'Los documentos aparecerán aquí una vez que sean subidos'
+                : 'Prueba ajustando los filtros de búsqueda'
+              }
+            </p>
+            {hasActiveFilters ? (
+              <button onClick={clearFilters} className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                Limpiar Filtros
+              </button>
+            ) : (
+              <button 
+                onClick={() => setShowUploadModal(true)}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+              >
+                Subir Primer Documento
+              </button>
+            )}
+          </div>
+        ) : (
+          <DocumentsTable 
+            documents={filteredDocuments}
+            documentTypes={data.documentTypes}
+            onDocumentSelect={setSelectedDocument}
+            userRole={userRole}
+            refresh={refresh}
+          />
+        )}
+      </div>
+
+      {/* Modal de subida de documentos */}
+      {showUploadModal && (
+        <UploadDocumentModal 
+          clients={data.clients}
+          documentTypes={data.documentTypes}
+          onClose={() => setShowUploadModal(false)}
+          onSuccess={() => {
+            setShowUploadModal(false);
+            refresh(true);
+          }}
+        />
+      )}
+
+      {/* Modal de detalles del documento */}
+      {selectedDocument && (
+        <DocumentDetailsModal 
+          document={selectedDocument}
+          onClose={() => setSelectedDocument(null)}
+          onUpdate={() => {
+            setSelectedDocument(null);
+            refresh(true);
+          }}
+          userRole={userRole}
+        />
+      )}
     </div>
-  </div>
-);
+  );
+};
+
+// Componente de tabla de documentos
+const DocumentsTable = ({ documents, documentTypes, onDocumentSelect, userRole, refresh }) => {
+  const formatStatus = (status) => {
+    const statusConfig = {
+      'pending': { text: 'Pendiente', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
+      'under_review': { text: 'En Revisión', color: 'bg-blue-100 text-blue-800', icon: Eye },
+      'approved': { text: 'Aprobado', color: 'bg-green-100 text-green-800', icon: CheckCircle },
+      'rejected': { text: 'Rechazado', color: 'bg-red-100 text-red-800', icon: XCircle },
+      'expired': { text: 'Vencido', color: 'bg-orange-100 text-orange-800', icon: AlertTriangle }
+    };
+    return statusConfig[status] || { text: status, color: 'bg-gray-100 text-gray-800', icon: FileText };
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const getDaysUntilExpiry = (validUntil) => {
+    if (!validUntil) return null;
+    const today = new Date();
+    const expiryDate = new Date(validUntil);
+    const diffTime = expiryDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+
+  return (
+    <div>
+      <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
+        <div className="grid grid-cols-7 gap-4 text-sm font-medium text-gray-700">
+          <div>Documento</div>
+          <div>Cliente</div>
+          <div>Tipo</div>
+          <div>Estado</div>
+          <div>Subido</div>
+          <div>Vigencia</div>
+          <div>Acciones</div>
+        </div>
+      </div>
+      
+      <div className="divide-y divide-gray-200">
+        {documents.map(doc => {
+          const statusInfo = formatStatus(doc.status);
+          const StatusIcon = statusInfo.icon;
+          const daysUntilExpiry = getDaysUntilExpiry(doc.valid_until);
+          const docType = documentTypes.find(t => t.id === doc.document_type_id);
+          
+          return (
+            <div key={doc.id} className="px-6 py-4 hover:bg-gray-50 transition-colors">
+              <div className="grid grid-cols-7 gap-4 items-center">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{doc.name}</p>
+                  <p className="text-xs text-gray-500">
+                    v{doc.version} • {formatFileSize(doc.file_size || 0)}
+                  </p>
+                </div>
+                
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{doc.clients?.name}</p>
+                  <p className="text-xs text-gray-500">{doc.clients?.rfc}</p>
+                </div>
+                
+                <div className="text-sm text-gray-600">
+                  {docType?.code || 'N/A'}
+                </div>
+                
+                <div>
+                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusInfo.color}`}>
+                    <StatusIcon className="h-3 w-3 mr-1" />
+                    {statusInfo.text}
+                  </span>
+                </div>
+                
+                <div className="text-sm text-gray-500">
+                  {new Date(doc.created_at).toLocaleDateString()}
+                </div>
+                
+                <div>
+                  {doc.valid_until ? (
+                    <div className="text-sm">
+                      {daysUntilExpiry !== null && (
+                        <span className={`font-medium ${
+                          daysUntilExpiry < 0 ? 'text-red-600' :
+                          daysUntilExpiry <= 15 ? 'text-orange-600' :
+                          daysUntilExpiry <= 30 ? 'text-yellow-600' :
+                          'text-green-600'
+                        }`}>
+                          {daysUntilExpiry < 0 ? `Vencido hace ${Math.abs(daysUntilExpiry)} días` :
+                           daysUntilExpiry === 0 ? 'Vence hoy' :
+                           `${daysUntilExpiry} días restantes`
+                          }
+                        </span>
+                      )}
+                      <p className="text-xs text-gray-500">
+                        {new Date(doc.valid_until).toLocaleDateString()}
+                      </p>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-400">Sin vigencia</span>
+                  )}
+                </div>
+                
+                <div className="flex space-x-1">
+                  <button
+                    onClick={() => onDocumentSelect(doc)}
+                    className="text-blue-600 hover:text-blue-800 p-1 rounded"
+                    title="Ver detalles"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                  
+                  {doc.file_url && (
+                    <button
+                      onClick={() => window.open(doc.file_url, '_blank')}
+                      className="text-green-600 hover:text-green-800 p-1 rounded"
+                      title="Descargar"
+                    >
+                      <Download className="h-4 w-4" />
+                    </button>
+                  )}
+                  
+                  {userRole !== 'cliente' && doc.status === 'pending' && (
+                    <button
+                      className="text-orange-600 hover:text-orange-800 p-1 rounded"
+                      title="Revisar"
+                    >
+                      <FileCheck className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// Modal de subida de documentos
+const UploadDocumentModal = ({ clients, documentTypes, onClose, onSuccess }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    clientId: '',
+    documentTypeId: '',
+    validFrom: '',
+    validUntil: ''
+  });
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!file || !formData.clientId || !formData.documentTypeId) {
+      toast.error('Por favor completa todos los campos requeridos');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      // Validar archivo
+      if (file.type !== 'application/pdf') {
+        throw new Error('Solo se permiten archivos PDF');
+      }
+      
+      if (file.size > 100 * 1024 * 1024) { // 100MB
+        throw new Error('El archivo no puede ser mayor a 100MB');
+      }
+
+      // Subir archivo a Supabase Storage
+      const fileExt = 'pdf';
+      const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+      const filePath = `documents/${formData.clientId}/${fileName}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw new Error('Error subiendo archivo: ' + uploadError.message);
+      }
+
+      // Obtener URL pública
+      const { data: { publicUrl } } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+
+      // Crear registro en base de datos
+      const { data: docData, error: docError } = await supabase
+        .from('documents')
+        .insert([{
+          name: formData.name || file.name,
+          client_id: formData.clientId,
+          document_type_id: formData.documentTypeId,
+          file_url: publicUrl,
+          file_size: file.size,
+          status: 'pending',
+          valid_from: formData.validFrom || null,
+          valid_until: formData.validUntil || null,
+          version: 1
+        }])
+        .select()
+        .single();
+
+      if (docError) {
+        throw new Error('Error guardando documento: ' + docError.message);
+      }
+
+      toast.success('Documento subido exitosamente');
+      onSuccess();
+
+    } catch (error) {
+      console.error('Error subiendo documento:', error);
+      toast.error(error.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      if (!formData.name) {
+        setFormData(prev => ({
+          ...prev,
+          name: selectedFile.name.replace('.pdf', '')
+        }));
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-medium text-gray-900">Subir Nuevo Documento</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              ×
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Archivo PDF <span className="text-red-500">*</span>
+            </label>
+            <div 
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 cursor-pointer"
+            >
+              {file ? (
+                <div>
+                  <FileText className="h-8 w-8 text-blue-600 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                  <p className="text-xs text-gray-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                </div>
+              ) : (
+                <div>
+                  <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                  <p className="text-sm text-gray-600">Haz clic para seleccionar un archivo PDF</p>
+                  <p className="text-xs text-gray-500">Máximo 100MB</p>
+                </div>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf"
+              onChange={handleFileChange}
+              className="hidden"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Nombre del Documento <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Nombre descriptivo del documento"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Cliente <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={formData.clientId}
+              onChange={(e) => setFormData(prev => ({ ...prev, clientId: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            >
+              <option value="">Seleccionar cliente</option>
+              {clients.map(client => (
+                <option key={client.id} value={client.id}>
+                  {client.name} ({client.rfc})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Tipo de Documento <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={formData.documentTypeId}
+              onChange={(e) => setFormData(prev => ({ ...prev, documentTypeId: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            >
+              <option value="">Seleccionar tipo</option>
+              {documentTypes.map(type => (
+                <option key={type.id} value={type.id}>
+                  {type.code} - {type.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Válido Desde
+              </label>
+              <input
+                type="date"
+                value={formData.validFrom}
+                onChange={(e) => setFormData(prev => ({ ...prev, validFrom: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Válido Hasta
+              </label>
+              <input
+                type="date"
+                value={formData.validUntil}
+                onChange={(e) => setFormData(prev => ({ ...prev, validUntil: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+              disabled={uploading}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={uploading || !file}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+            >
+              {uploading ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Subiendo...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Subir Documento
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Modal de detalles del documento
+const DocumentDetailsModal = ({ document, onClose, onUpdate, userRole }) => {
+  const [reviewData, setReviewData] = useState({
+    status: document.status,
+    comments: document.review_comments || ''
+  });
+  const [updating, setUpdating] = useState(false);
+
+  const handleStatusUpdate = async () => {
+    if (userRole === 'cliente') {
+      toast.error('No tienes permisos para cambiar el estado del documento');
+      return;
+    }
+
+    setUpdating(true);
+    try {
+      const { error } = await supabase
+        .from('documents')
+        .update({
+          status: reviewData.status,
+          review_comments: reviewData.comments,
+          reviewed_by: (await supabase.auth.getUser()).data.user?.id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', document.id);
+
+      if (error) throw error;
+
+      toast.success('Estado del documento actualizado');
+      onUpdate();
+    } catch (error) {
+      console.error('Error actualizando documento:', error);
+      toast.error('Error al actualizar el documento');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const formatStatus = (status) => {
+    const statusConfig = {
+      'pending': { text: 'Pendiente', color: 'text-yellow-800 bg-yellow-100', icon: Clock },
+      'under_review': { text: 'En Revisión', color: 'text-blue-800 bg-blue-100', icon: Eye },
+      'approved': { text: 'Aprobado', color: 'text-green-800 bg-green-100', icon: CheckCircle },
+      'rejected': { text: 'Rechazado', color: 'text-red-800 bg-red-100', icon: XCircle },
+      'expired': { text: 'Vencido', color: 'text-orange-800 bg-orange-100', icon: AlertTriangle }
+    };
+    return statusConfig[status] || { text: status, color: 'text-gray-800 bg-gray-100', icon: FileText };
+  };
+
+  const statusInfo = formatStatus(document.status);
+  const StatusIcon = statusInfo.icon;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">{document.name}</h3>
+              <div className="flex items-center space-x-4 text-sm text-gray-500">
+                <span>Versión {document.version}</span>
+                <span>•</span>
+                <span>Subido el {new Date(document.created_at).toLocaleDateString()}</span>
+              </div>
+            </div>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <X className="h-6 w-6" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Información básica */}
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <h4 className="text-sm font-medium text-gray-900 mb-3">Información del Cliente</h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Cliente:</span>
+                  <span className="font-medium">{document.clients?.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">RFC:</span>
+                  <span className="font-mono">{document.clients?.rfc}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Municipio:</span>
+                  <span>{document.clients?.municipality}</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-medium text-gray-900 mb-3">Estado Actual</h4>
+              <div className="space-y-3">
+                <div>
+                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusInfo.color}`}>
+                    <StatusIcon className="h-4 w-4 mr-2" />
+                    {statusInfo.text}
+                  </span>
+                </div>
+                
+                {document.valid_from && (
+                  <div className="text-sm">
+                    <span className="text-gray-500">Vigencia:</span>
+                    <div className="font-medium">
+                      {new Date(document.valid_from).toLocaleDateString()} - {document.valid_until ? new Date(document.valid_until).toLocaleDateString() : 'Indefinido'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Archivo */}
+          <div>
+            <h4 className="text-sm font-medium text-gray-900 mb-3">Archivo</h4>
+            <div className="border border-gray-200 rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <FileText className="h-8 w-8 text-red-600 mr-3" />
+                  <div>
+                    <p className="font-medium">{document.name}</p>
+                    <p className="text-sm text-gray-500">
+                      {document.file_size ? `${(document.file_size / 1024 / 1024).toFixed(2)} MB` : 'Tamaño desconocido'}
+                    </p>
+                  </div>
+                </div>
+                
+                {document.file_url && (
+                  <button
+                    onClick={() => window.open(document.file_url, '_blank')}
+                    className="flex items-center px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Descargar
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Sección de revisión (solo para admins) */}
+          {userRole !== 'cliente' && (
+            <div>
+              <h4 className="text-sm font-medium text-gray-900 mb-3">Revisión del Documento</h4>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Estado</label>
+                  <select
+                    value={reviewData.status}
+                    onChange={(e) => setReviewData(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="pending">Pendiente</option>
+                    <option value="under_review">En Revisión</option>
+                    <option value="approved">Aprobado</option>
+                    <option value="rejected">Rechazado</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Comentarios de Revisión</label>
+                  <textarea
+                    value={reviewData.comments}
+                    onChange={(e) => setReviewData(prev => ({ ...prev, comments: e.target.value }))}
+                    rows={3}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Agregar comentarios sobre el documento..."
+                  />
+                </div>
+
+                <button
+                  onClick={handleStatusUpdate}
+                  disabled={updating || reviewData.status === document.status}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                >
+                  {updating ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Actualizando...
+                    </>
+                  ) : (
+                    <>
+                      <FileCheck className="h-4 w-4 mr-2" />
+                      Actualizar Estado
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Comentarios existentes */}
+          {document.review_comments && (
+            <div>
+              <h4 className="text-sm font-medium text-gray-900 mb-3">Comentarios</h4>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-sm text-gray-700">{document.review_comments}</p>
+                {document.reviewed_by_user && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    Por: {document.reviewed_by_user.email}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 const Reportes = () => (
   <div className="space-y-6">
