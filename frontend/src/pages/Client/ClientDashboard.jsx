@@ -1,489 +1,581 @@
-// pages/Client/ClientDashboard.jsx - COMPLETAMENTE FUNCIONAL
-import React, { useState, useEffect } from 'react';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
-import { toast } from 'react-hot-toast';
-import { 
-  Home, 
-  FileText, 
-  Building2, 
-  User, 
-  Bell, 
-  Search, 
-  LogOut,
-  ChevronDown,
-  Menu,
-  X,
-  Shield,
-  Calendar,
-  CheckCircle,
-  AlertTriangle,
-  Clock
-} from 'lucide-react';
+// REEMPLAZAR COMPLETAMENTE tu ClientDashboard.jsx con este código actualizado
 
-// Componentes de páginas del dashboard
-const DashboardHome = () => (
-  <div className="space-y-6">
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Bienvenido, Cliente!</h2>
-      <p className="text-gray-600 mb-6">
-        Gestiona tus documentos de Protección Civil desde tu panel de control
-      </p>
+import { Routes, Route } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
+import { supabase } from '../../lib/supabase'
+import { ClientLayout } from '../../components/layouts/ClientLayout'
+import { ClientDocuments } from '../../components/client/ClientDocuments' // Importar el componente completo
+import {
+  DocumentTextIcon,
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  BuildingOfficeIcon,
+  PlusIcon,
+  BellIcon,
+  CalendarIcon,
+  ClockIcon,
+  XCircleIcon,
+  InformationCircleIcon
+} from '@heroicons/react/24/outline'
+
+// Hook simplificado SOLO para el cliente actual
+const useSimpleClientData = () => {
+  const [data, setData] = useState({
+    stats: {
+      activeDocuments: 0,
+      approvedDocuments: 0,
+      expiringDocuments: 0,
+      totalEstablishments: 0,
+      compliancePercentage: 0
+    },
+    documents: [],
+    establishments: [],
+    notifications: [],
+    loading: true,
+    error: null
+  })
+  const { user } = useAuth()
+
+  useEffect(() => {
+    const fetchClientData = async () => {
+      console.log('🔍 useSimpleClientData - Iniciando con user:', user)
       
-      {/* Cards de estadísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-blue-50 rounded-lg p-6 border border-blue-200">
-          <div className="flex items-center">
-            <FileText className="h-8 w-8 text-blue-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-blue-600">Documentos Activos</p>
-              <p className="text-2xl font-bold text-blue-900">-</p>
-            </div>
-          </div>
-        </div>
+      // Detectar si user es string (email) u objeto
+      let userEmail;
+      let userId;
+      
+      if (typeof user === 'string') {
+        console.log('📧 User es string (email):', user)
+        userEmail = user;
+        userId = null;
+      } else if (user?.id) {
+        console.log('👤 User es objeto con ID:', user.id)
+        userEmail = user.email;
+        userId = user.id;
+      } else {
+        console.log('❌ No hay user válido, esperando...')
+        return
+      }
+
+      console.log('✅ Procediendo con email:', userEmail, 'y userId:', userId)
+      
+      try {
+        console.log('📊 Iniciando carga de datos del cliente...')
+        setData(prev => ({ ...prev, loading: true, error: null }))
+
+        // 1. Buscar el ID del cliente en la tabla clients usando solo email
+        console.log('🔍 Buscando cliente en tabla clients por email:', userEmail)
         
-        <div className="bg-green-50 rounded-lg p-6 border border-green-200">
-          <div className="flex items-center">
-            <CheckCircle className="h-8 w-8 text-green-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-green-600">Aprobados</p>
-              <p className="text-2xl font-bold text-green-900">-</p>
-            </div>
-          </div>
-        </div>
+        const { data: clientData, error: clientError } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('email', userEmail)
+          .single()
+
+        console.log('📋 Resultado consulta clients:', { clientData, clientError })
+
+        if (clientError) {
+          console.log('⚠️ Cliente no encontrado en la tabla clients:', clientError.message)
+          console.log('📝 Código de error:', clientError.code)
+          
+          // Si el error es que no existe (PGRST116), no es un error real
+          if (clientError.code === 'PGRST116') {
+            console.log('✅ Cliente simplemente no existe aún - creando estado vacío')
+            setData({
+              stats: {
+                activeDocuments: 0,
+                approvedDocuments: 0,
+                expiringDocuments: 0,
+                totalEstablishments: 0,
+                compliancePercentage: 0
+              },
+              documents: [],
+              establishments: [],
+              notifications: [],
+              loading: false,
+              error: null,
+              clientExists: false
+            })
+            return
+          } else {
+            // Error real de permisos o conectividad
+            throw new Error(`Error consultando clients: ${clientError.message}`)
+          }
+        }
+
+        console.log('✅ Cliente encontrado en clients:', clientData.id)
+
+        // 2. Obtener documentos si existe el cliente
+        let documents = []
+        let establishments = []
         
-        <div className="bg-yellow-50 rounded-lg p-6 border border-yellow-200">
-          <div className="flex items-center">
-            <Clock className="h-8 w-8 text-yellow-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-yellow-600">Por Vencer</p>
-              <p className="text-2xl font-bold text-yellow-900">-</p>
-            </div>
-          </div>
-        </div>
+        if (clientData) {
+          console.log('📄 Cargando documentos para client_id:', clientData.id)
+          
+          // Documentos
+          try {
+            const { data: docsData, error: docsError } = await supabase
+              .from('documents')
+              .select('*')
+              .eq('client_id', clientData.id)
+              .order('created_at', { ascending: false })
+
+            console.log('📄 Resultado documentos:', { 
+              count: docsData?.length || 0, 
+              error: docsError?.message || 'none' 
+            })
+
+            if (!docsError) {
+              documents = docsData || []
+            }
+          } catch (err) {
+            console.log('❌ Error cargando documentos:', err.message)
+          }
+
+          console.log('🏢 Cargando establecimientos para client_id:', clientData.id)
+          
+          // Establecimientos
+          try {
+            const { data: estData, error: estError } = await supabase
+              .from('establishments')
+              .select('*')
+              .eq('client_id', clientData.id)
+
+            console.log('🏢 Resultado establecimientos:', { 
+              count: estData?.length || 0, 
+              error: estError?.message || 'none' 
+            })
+
+            if (!estError) {
+              establishments = estData || []
+            }
+          } catch (err) {
+            console.log('❌ Error cargando establecimientos:', err.message)
+          }
+        }
+
+        console.log('🧮 Calculando estadísticas...')
         
-        <div className="bg-purple-50 rounded-lg p-6 border border-purple-200">
-          <div className="flex items-center">
-            <Building2 className="h-8 w-8 text-purple-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-purple-600">Establecimientos</p>
-              <p className="text-2xl font-bold text-purple-900">-</p>
+        // 3. Calcular estadísticas básicas
+        const today = new Date()
+        const in30Days = new Date(today.getTime() + (30 * 24 * 60 * 60 * 1000))
+        
+        const activeDocuments = documents.filter(doc => 
+          ['pending', 'approved'].includes(doc.status)
+        ).length
+
+        const approvedDocuments = documents.filter(doc => 
+          doc.status === 'approved'
+        ).length
+
+        const expiringDocuments = documents.filter(doc => 
+          doc.status === 'approved' && 
+          doc.valid_until && 
+          new Date(doc.valid_until) <= in30Days && 
+          new Date(doc.valid_until) > today
+        ).length
+
+        // Calcular compliance básico
+        const totalRequired = 5 // Estimación
+        const compliancePercentage = totalRequired > 0 ? Math.round((approvedDocuments / totalRequired) * 100) : 0
+
+        const finalStats = {
+          activeDocuments,
+          approvedDocuments,
+          expiringDocuments,
+          totalEstablishments: establishments.length,
+          compliancePercentage
+        }
+
+        console.log('📊 Estadísticas calculadas:', finalStats)
+
+        setData({
+          stats: finalStats,
+          documents,
+          establishments,
+          notifications: [], // Por ahora vacío
+          loading: false,
+          error: null,
+          clientExists: true
+        })
+
+        console.log('✅ Datos cargados exitosamente')
+
+      } catch (error) {
+        console.error('❌ Error general cargando datos del cliente:', error)
+        console.error('Stack trace:', error.stack)
+        
+        setData(prev => ({
+          ...prev,
+          loading: false,
+          error: error.message
+        }))
+      }
+    }
+
+    fetchClientData()
+  }, [user?.id])
+
+  return data
+}
+
+// Página principal simplificada
+const ClientDashboardHome = () => {
+  const { user, userRole } = useAuth()
+  const data = useSimpleClientData()
+
+  if (data.loading) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+            <div className="grid grid-cols-4 gap-4">
+              {[1,2,3,4].map(i => (
+                <div key={i} className="h-20 bg-gray-200 rounded"></div>
+              ))}
             </div>
           </div>
         </div>
       </div>
-    </div>
-  </div>
-);
+    )
+  }
 
-const MisDocumentos = () => (
-  <div className="space-y-6">
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">Mis Documentos</h2>
-      <p className="text-gray-600 mb-6">
-        Aquí aparecerán todos tus documentos de Protección Civil
-      </p>
-      
-      {/* Placeholder para documentos */}
-      <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
-        <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">No hay documentos</h3>
-        <p className="text-gray-500 mb-4">
-          Tus documentos aparecerán aquí una vez que sean agregados por el administrador
-        </p>
-        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
-          Solicitar Documentos
-        </button>
+  if (data.error) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+          <div className="flex items-center">
+            <XCircleIcon className="h-5 w-5 text-red-500 mr-2" />
+            <h3 className="text-lg font-medium text-red-900">Error al cargar datos</h3>
+          </div>
+          <p className="text-red-700 mt-2">{data.error}</p>
+        </div>
       </div>
-    </div>
-  </div>
-);
+    )
+  }
 
-const Establecimientos = () => (
-  <div className="space-y-6">
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">Establecimientos</h2>
-      <p className="text-gray-600 mb-6">
-        Gestiona la información de tus establecimientos
-      </p>
-      
-      {/* Placeholder para establecimientos */}
-      <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
-        <Building2 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">No hay establecimientos registrados</h3>
-        <p className="text-gray-500 mb-4">
-          Contacta al administrador para registrar tus establecimientos
-        </p>
-        <button className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors">
-          Agregar Establecimiento
-        </button>
+  // Si el cliente no existe en la tabla clients
+  if (!data.clientExists) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">
+                ¡Bienvenido, {user?.user_metadata?.first_name || 'Cliente'}!
+              </h1>
+              <p className="text-gray-600 mt-1">
+                Tu perfil está siendo configurado por nuestro equipo
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-primary-100 text-primary-800">
+                {userRole}
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                {user?.email}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+          <div className="flex items-start">
+            <InformationCircleIcon className="w-6 h-6 text-blue-600 mt-0.5" />
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-blue-800">
+                Perfil en proceso
+              </h3>
+              <p className="text-sm text-blue-700 mt-1">
+                Nuestro equipo está configurando tu perfil empresarial. 
+                Una vez completado, podrás gestionar tus documentos y establecimientos aquí.
+              </p>
+              <p className="text-sm text-blue-700 mt-2">
+                <strong>Mientras tanto, puedes:</strong><br />
+                • Explorar las diferentes secciones del panel<br />
+                • Contactar con soporte si tienes dudas<br />
+                • Preparar tu documentación
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  </div>
-);
+    )
+  }
 
-const MiPerfil = () => {
-  const { user, userRole } = useAuth();
-  
+  // Cliente existe - mostrar dashboard completo
+  const upcomingExpiry = data.documents.filter(doc => {
+    if (doc.status !== 'approved' || !doc.valid_until) return false
+    const daysRemaining = Math.ceil((new Date(doc.valid_until) - new Date()) / (1000 * 60 * 60 * 24))
+    return daysRemaining > 0 && daysRemaining <= 30
+  })
+
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Mi Perfil</h2>
-        
-        <div className="space-y-4">
-          <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
-              <User className="h-8 w-8 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900">Usuario Cliente</h3>
-              <p className="text-gray-500">{user}</p>
-            </div>
+      {/* Header de bienvenida */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              ¡Bienvenido, {user?.user_metadata?.first_name || 'Cliente'}!
+            </h1>
+            <p className="text-gray-600 mt-1">
+              Gestiona tus documentos de Protección Civil desde tu panel de control
+            </p>
           </div>
-          
-          <div className="border-t border-gray-200 pt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Email</label>
-                <p className="mt-1 text-sm text-gray-900">{user}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Rol</label>
-                <span className="mt-1 inline-block px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
-                  {userRole}
-                </span>
-              </div>
+          <div className="text-right">
+            <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-primary-100 text-primary-800">
+              {userRole}
             </div>
-          </div>
-          
-          <div className="border-t border-gray-200 pt-4">
-            <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
-              Actualizar Perfil
-            </button>
+            <p className="text-sm text-gray-500 mt-1">
+              {user?.email}
+            </p>
           </div>
         </div>
       </div>
-    </div>
-  );
-};
 
-const ClientDashboard = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const { user, userRole, logout } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  // Cerrar menú de usuario al hacer click fuera
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (userMenuOpen && !event.target.closest('.user-menu')) {
-        setUserMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [userMenuOpen]);
-
-  const handleLogout = async () => {
-  // Flag para evitar múltiples ejecuciones
-  if (window.isLoggingOut) {
-    console.log('⚠️ Logout ya en proceso, ignorando...');
-    return;
-  }
-  
-  window.isLoggingOut = true;
-  
-  try {
-    console.log('🔄 Iniciando logout...');
-    
-    // Cerrar menú inmediatamente
-    setUserMenuOpen(false);
-    
-    // Toast con timeout más corto
-    const toastId = toast.loading('Cerrando sesión...', { 
-      duration: 3000 // Máximo 3 segundos
-    });
-    
-    // Timeout de seguridad - si no termina en 5 segundos, forzar logout
-    const timeoutId = setTimeout(() => {
-      console.log('⏰ Timeout de logout, forzando salida...');
-      forceLogout(toastId);
-    }, 5000);
-    
-    // Intentar logout normal
-    const result = await Promise.race([
-      logout(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 4000)
-      )
-    ]);
-    
-    // Limpiar timeout si llegamos aquí
-    clearTimeout(timeoutId);
-    
-    if (result && result.success) {
-      console.log('✅ Logout exitoso');
-      toast.success('Sesión cerrada', { id: toastId, duration: 1000 });
-      
-      // Redirección inmediata
-      window.location.href = '/login';
-    } else {
-      throw new Error('Logout falló');
-    }
-    
-  } catch (error) {
-    console.error('❌ Error en logout:', error);
-    forceLogout();
-  } finally {
-    window.isLoggingOut = false;
-  }
-};
-
-// Función auxiliar para forzar logout
-const forceLogout = (toastId = null) => {
-  console.log('🚨 Ejecutando logout forzado...');
-  
-  try {
-    // Logout directo de Supabase (sin await para evitar colgarse)
-    supabase.auth.signOut().catch(e => console.log('Error Supabase:', e));
-  } catch (e) {
-    console.log('Error en signOut:', e);
-  }
-  
-  // Limpiar todo el storage
-  try {
-    localStorage.clear();
-    sessionStorage.clear();
-  } catch (e) {
-    console.log('Error limpiando storage:', e);
-  }
-  
-  // Toast rápido
-  if (toastId) {
-    toast.error('Sesión cerrada', { id: toastId, duration: 1000 });
-  } else {
-    toast.error('Sesión cerrada', { duration: 1000 });
-  }
-  
-  // Redirección inmediata y forzada
-  setTimeout(() => {
-    window.location.href = '/login';
-  }, 500);
-};
-
-  const navigation = [
-    { 
-      name: 'Dashboard', 
-      href: '/dashboard/cliente', 
-      icon: Home,
-      current: location.pathname === '/dashboard/cliente' 
-    },
-    { 
-      name: 'Mis Documentos', 
-      href: '/dashboard/cliente/documentos', 
-      icon: FileText,
-      current: location.pathname === '/dashboard/cliente/documentos' 
-    },
-    { 
-      name: 'Establecimientos', 
-      href: '/dashboard/cliente/establecimientos', 
-      icon: Building2,
-      current: location.pathname === '/dashboard/cliente/establecimientos' 
-    },
-    { 
-      name: 'Mi Perfil', 
-      href: '/dashboard/cliente/perfil', 
-      icon: User,
-      current: location.pathname === '/dashboard/cliente/perfil' 
-    },
-  ];
-
-  const handleNavigation = (href) => {
-    console.log('🧭 Navegando a:', href);
-    navigate(href);
-    setSidebarOpen(false); // Cerrar sidebar en móvil
-  };
-
-  return (
-    <div className="h-screen flex overflow-hidden bg-gray-100">
-      {/* Sidebar para móvil */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 flex z-40 md:hidden">
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
-          <div className="relative flex-1 flex flex-col max-w-xs w-full bg-white">
-            <div className="absolute top-0 right-0 -mr-12 pt-2">
-              <button
-                className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
-                onClick={() => setSidebarOpen(false)}
-              >
-                <X className="h-6 w-6 text-white" />
-              </button>
+      {/* Grid de estadísticas */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-primary-100 rounded-lg">
+              <DocumentTextIcon className="w-6 h-6 text-primary-600" />
             </div>
-            <SidebarContent navigation={navigation} onNavigate={handleNavigation} />
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Documentos Activos</p>
+              <p className="text-2xl font-bold text-gray-900">{data.stats.activeDocuments}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-success-100 rounded-lg">
+              <CheckCircleIcon className="w-6 h-6 text-success-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Aprobados</p>
+              <p className="text-2xl font-bold text-gray-900">{data.stats.approvedDocuments}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-warning-100 rounded-lg">
+              <ClockIcon className="w-6 h-6 text-warning-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Por Vencer</p>
+              <p className="text-2xl font-bold text-gray-900">{data.stats.expiringDocuments}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-gray-100 rounded-lg">
+              <BuildingOfficeIcon className="w-6 h-6 text-gray-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Establecimientos</p>
+              <p className="text-2xl font-bold text-gray-900">{data.stats.totalEstablishments}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Porcentaje de cumplimiento */}
+      {data.stats.compliancePercentage > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Estado de Cumplimiento</h2>
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+              data.stats.compliancePercentage >= 80 
+                ? 'bg-green-100 text-green-800'
+                : data.stats.compliancePercentage >= 60
+                ? 'bg-yellow-100 text-yellow-800'
+                : 'bg-red-100 text-red-800'
+            }`}>
+              {data.stats.compliancePercentage}% Completo
+            </span>
+          </div>
+          
+          <div className="w-full bg-gray-200 rounded-full h-3">
+            <div 
+              className={`h-3 rounded-full transition-all duration-500 ${
+                data.stats.compliancePercentage >= 80 
+                  ? 'bg-green-500'
+                  : data.stats.compliancePercentage >= 60
+                  ? 'bg-yellow-500'
+                  : 'bg-red-500'
+              }`}
+              style={{ width: `${data.stats.compliancePercentage}%` }}
+            ></div>
           </div>
         </div>
       )}
 
-      {/* Sidebar para desktop */}
-      <div className="hidden md:flex md:flex-shrink-0">
-        <div className="flex flex-col w-64">
-          <SidebarContent navigation={navigation} onNavigate={handleNavigation} />
+      {/* Alertas de vencimientos próximos */}
+      {upcomingExpiry.length > 0 && (
+        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 rounded-xl p-6">
+          <div className="flex items-start">
+            <ExclamationTriangleIcon className="w-6 h-6 text-yellow-600 mt-0.5" />
+            <div className="ml-3 flex-1">
+              <h3 className="text-sm font-medium text-yellow-800">
+                Documentos próximos a vencer
+              </h3>
+              <div className="mt-2 space-y-1">
+                {upcomingExpiry.slice(0, 3).map(doc => {
+                  const daysRemaining = Math.ceil((new Date(doc.valid_until) - new Date()) / (1000 * 60 * 60 * 24))
+                  return (
+                    <p key={doc.id} className="text-sm text-yellow-700">
+                      • {doc.name} vence en {daysRemaining} día{daysRemaining !== 1 ? 's' : ''}
+                    </p>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Contenido principal */}
-      <div className="flex flex-col w-0 flex-1 overflow-hidden">
-        {/* Header */}
-        <div className="relative z-10 flex-shrink-0 flex h-16 bg-white shadow-sm border-b border-gray-200">
-          <button
-            className="px-4 border-r border-gray-200 text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 md:hidden"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu className="h-6 w-6" />
+      {/* Acciones rápidas */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Acciones Rápidas</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <button className="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
+            <div className="p-2 bg-primary-100 rounded-lg mr-4">
+              <PlusIcon className="w-5 h-5 text-primary-600" />
+            </div>
+            <div>
+              <p className="font-medium text-gray-900">Subir Documento</p>
+              <p className="text-sm text-gray-600">Nuevo documento FEII</p>
+            </div>
+          </button>
+
+          <button className="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
+            <div className="p-2 bg-success-100 rounded-lg mr-4">
+              <BuildingOfficeIcon className="w-5 h-5 text-success-600" />
+            </div>
+            <div>
+              <p className="font-medium text-gray-900">Ver Establecimientos</p>
+              <p className="text-sm text-gray-600">Gestionar ubicaciones</p>
+            </div>
+          </button>
+
+          <button className="flex items-center p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-left">
+            <div className="p-2 bg-warning-100 rounded-lg mr-4">
+               <ClockIcon className="w-5 h-5 text-warning-600" />
+            </div>
+           <div>
+           <p className="font-medium text-gray-900">Ver Vencimientos</p>
+            <p className="text-sm text-gray-600">Documentos por renovar</p>
+           </div>
           </button>
           
-          <div className="flex-1 px-4 flex justify-between">
-            <div className="flex-1 flex">
-              <div className="w-full flex md:ml-0">
-                <div className="relative w-full text-gray-400 focus-within:text-gray-600">
-                  <div className="absolute inset-y-0 left-0 flex items-center pointer-events-none">
-                    <Search className="h-5 w-5" />
-                  </div>
-                  <input
-                    className="block w-full h-full pl-8 pr-3 py-2 border-transparent text-gray-900 placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-0 focus:border-transparent"
-                    placeholder="Buscar documentos..."
-                    type="search"
-                  />
+        </div>
+      </div>
+
+      {/* Documentos recientes */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Documentos Recientes</h2>
+          <button className="text-primary-600 hover:text-primary-700 text-sm font-medium">
+            Ver todos
+          </button>
+        </div>
+        
+        {data.documents.length === 0 ? (
+          <div className="text-center py-8">
+            <DocumentTextIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600">No tienes documentos aún</p>
+            <p className="text-sm text-gray-500 mt-1">Sube tu primer documento para comenzar</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {data.documents.slice(0, 5).map(doc => (
+              <div key={doc.id} className="flex items-center space-x-4 p-3 hover:bg-gray-50 rounded-lg">
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  doc.status === 'approved' ? 'bg-green-100' :
+                  doc.status === 'pending' ? 'bg-yellow-100' :
+                  doc.status === 'rejected' ? 'bg-red-100' : 'bg-gray-100'
+                }`}>
+                  <DocumentTextIcon className={`w-5 h-5 ${
+                    doc.status === 'approved' ? 'text-green-600' :
+                    doc.status === 'pending' ? 'text-yellow-600' :
+                    doc.status === 'rejected' ? 'text-red-600' : 'text-gray-600'
+                  }`} />
                 </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {doc.name}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {new Date(doc.created_at).toLocaleDateString('es-MX')}
+                  </p>
+                </div>
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                  doc.status === 'approved' ? 'bg-green-100 text-green-800' :
+                  doc.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                  doc.status === 'rejected' ? 'bg-red-100 text-red-800' : 
+                  'bg-gray-100 text-gray-800'
+                }`}>
+                  {doc.status === 'approved' ? 'Aprobado' :
+                   doc.status === 'pending' ? 'Pendiente' :
+                   doc.status === 'rejected' ? 'Rechazado' : 'Vencido'
+                  }
+                </span>
               </div>
-            </div>
-            
-            <div className="ml-4 flex items-center md:ml-6">
-              {/* Notificaciones */}
-              <button className="bg-white p-1 rounded-full text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                <Bell className="h-6 w-6" />
-              </button>
-
-              {/* Menú de usuario */}
-              <div className="ml-3 relative user-menu">
-                <button
-                  onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  className="max-w-xs bg-white flex items-center text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-medium text-white">U</span>
-                    </div>
-                    <div className="hidden md:block text-left">
-                      <p className="text-sm font-medium text-gray-700">Usuario</p>
-                      <p className="text-xs text-gray-500">{userRole}</p>
-                    </div>
-                    <ChevronDown className="h-4 w-4 text-gray-400" />
-                  </div>
-                </button>
-
-                {userMenuOpen && (
-                  <div className="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5">
-                    <div className="py-1">
-                      <div className="px-4 py-2 border-b border-gray-100">
-                        <p className="text-sm text-gray-900 font-medium">{user}</p>
-                        <p className="text-xs text-gray-500">{userRole}</p>
-                      </div>
-                      
-                      <button
-                        onClick={() => {
-                          setUserMenuOpen(false);
-                          handleNavigation('/dashboard/cliente/perfil');
-                        }}
-                        className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                      >
-                        <User className="h-4 w-4 mr-2" />
-                        Mi Perfil
-                      </button>
-                      
-                      <button
-                        onClick={() => {
-                          setUserMenuOpen(false);
-                          handleLogout();
-                        }}
-                        className="flex items-center w-full px-4 py-2 text-sm text-red-700 hover:bg-red-50"
-                      >
-                        <LogOut className="h-4 w-4 mr-2" />
-                        Cerrar Sesión
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            ))}
           </div>
-        </div>
-
-        {/* Contenido de la página */}
-        <main className="flex-1 relative overflow-y-auto focus:outline-none">
-          <div className="py-6">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-              <Routes>
-                <Route path="/" element={<DashboardHome />} />
-                <Route path="/documentos" element={<MisDocumentos />} />
-                <Route path="/establecimientos" element={<Establecimientos />} />
-                <Route path="/perfil" element={<MiPerfil />} />
-              </Routes>
-            </div>
-          </div>
-        </main>
+        )}
       </div>
     </div>
-  );
-};
+  )
+}
 
-// Componente del sidebar reutilizable
-const SidebarContent = ({ navigation, onNavigate }) => (
-  <div className="flex-1 flex flex-col min-h-0 bg-white border-r border-gray-200">
-    <div className="flex-1 flex flex-col pt-5 pb-4 overflow-y-auto">
-      <div className="flex items-center flex-shrink-0 px-4">
-        <Shield className="h-8 w-8 text-blue-600" />
-        <div className="ml-3">
-          <p className="text-xl font-bold text-gray-900">B&C Consultores</p>
-          <p className="text-sm text-gray-500">Panel Cliente</p>
-        </div>
-      </div>
-      
-      <nav className="mt-8 flex-1 px-2 space-y-1">
-        {navigation.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.name}
-              onClick={() => onNavigate(item.href)}
-              className={`${
-                item.current
-                  ? 'bg-blue-100 border-blue-500 text-blue-700'
-                  : 'border-transparent text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              } group w-full flex items-center pl-2 pr-2 py-2 border-l-4 text-sm font-medium transition-colors`}
-            >
-              <Icon className="mr-3 h-5 w-5" />
-              {item.name}
-            </button>
-          );
-        })}
-      </nav>
-    </div>
-    
-    <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
-      <div className="flex items-center">
-        <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-          <User className="h-4 w-4 text-blue-600" />
-        </div>
-        <div className="ml-3">
-          <p className="text-sm font-medium text-gray-700">Usuario</p>
-          <p className="text-xs text-gray-500">cliente</p>
-        </div>
-      </div>
+// Componentes simplificados para otras rutas
+const SimpleClientEstablishments = () => (
+  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+    <h1 className="text-2xl font-bold text-gray-900 mb-4">Mis Establecimientos</h1>
+    <div className="text-center py-12">
+      <BuildingOfficeIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+      <p className="text-gray-600">Sección de establecimientos simplificada</p>
+      <p className="text-sm text-gray-500 mt-2">Funcionalidad completa disponible próximamente</p>
     </div>
   </div>
-);
+)
 
-export default ClientDashboard;
+const SimpleClientProfile = () => (
+  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+    <h1 className="text-2xl font-bold text-gray-900 mb-4">Mi Perfil</h1>
+    <div className="text-center py-12">
+      <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <span className="text-2xl text-primary-600">👤</span>
+      </div>
+      <p className="text-gray-600">Sección de perfil simplificada</p>
+      <p className="text-sm text-gray-500 mt-2">Funcionalidad completa disponible próximamente</p>
+    </div>
+  </div>
+)
+
+// Componente principal con routing actualizado
+const ClientDashboard = () => {
+  return (
+    <ClientLayout>
+      <Routes>
+        <Route index element={<ClientDashboardHome />} />
+        {/* Usar el componente completo de ClientDocuments */}
+        <Route path="documents" element={<ClientDocuments />} />
+        <Route path="establishments" element={<SimpleClientEstablishments />} />
+        <Route path="profile" element={<SimpleClientProfile />} />
+        <Route path="*" element={<ClientDashboardHome />} />
+      </Routes>
+    </ClientLayout>
+  )
+}
+
+export default ClientDashboard
