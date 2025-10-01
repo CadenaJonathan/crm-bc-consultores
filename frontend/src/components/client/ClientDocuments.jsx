@@ -1,9 +1,11 @@
 // src/components/client/ClientDocuments.jsx
-// VERSIÓN OPTIMIZADA PARA EVITAR CONGELAMIENTO
+// VERSIÓN COMPLETA CON MODAL DE SUBIDA Y VISUALIZADOR
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
+import { UploadDocumentModal } from './UploadDocumentModal'
+import { DocumentViewerModal } from './DocumentViewerModal'
 import { 
   DocumentTextIcon,
   CalendarIcon,
@@ -15,7 +17,6 @@ import {
   EyeIcon,
   ArrowDownTrayIcon,
   MagnifyingGlassIcon,
-  FunnelIcon,
   ArrowPathIcon
 } from '@heroicons/react/24/outline'
 
@@ -53,7 +54,7 @@ const statusConfig = {
   }
 }
 
-// Utilidades memoizadas
+// Utilidades
 const formatDate = (date) => {
   if (!date) return 'No definida'
   return new Date(date).toLocaleDateString('es-MX', {
@@ -82,15 +83,7 @@ const getExpiryStatus = (validUntil, currentStatus) => {
   return 'good'
 }
 
-const formatFileSize = (bytes) => {
-  if (!bytes) return 'Tamaño desconocido'
-  const k = 1024
-  const sizes = ['Bytes', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-// Hook optimizado para evitar bucles infinitos
+// Hook optimizado
 const useOptimizedClientDocuments = () => {
   const [data, setData] = useState({
     documents: [],
@@ -102,7 +95,6 @@ const useOptimizedClientDocuments = () => {
   
   const { user } = useAuth()
   
-  // Memoizar el email para evitar re-renders innecesarios
   const userEmail = useMemo(() => {
     if (typeof user === 'string') return user
     if (user?.email) return user.email
@@ -110,24 +102,19 @@ const useOptimizedClientDocuments = () => {
   }, [user])
 
   const fetchDocuments = useCallback(async (forceRefresh = false) => {
-    // Evitar fetch duplicados
     const now = Date.now()
     if (!forceRefresh && data.lastFetch && (now - data.lastFetch) < 5000) {
-      console.log('🚫 Evitando fetch duplicado - menos de 5s desde último fetch')
       return
     }
 
     if (!userEmail) {
-      console.log('❌ No hay email de usuario disponible')
       setData(prev => ({ ...prev, loading: false, error: null, documents: [] }))
       return
     }
 
     try {
-      console.log('🔄 Iniciando fetch optimizado para:', userEmail)
       setData(prev => ({ ...prev, loading: true, error: null }))
       
-      // 1. Obtener ID del cliente
       const { data: clientData, error: clientError } = await supabase
         .from('clients')
         .select('id')
@@ -135,7 +122,6 @@ const useOptimizedClientDocuments = () => {
         .single()
 
       if (clientError?.code === 'PGRST116') {
-        console.log('✅ Cliente no existe - estado vacío')
         setData({
           documents: [],
           documentTypes: [],
@@ -147,13 +133,8 @@ const useOptimizedClientDocuments = () => {
         return
       }
 
-      if (clientError) {
-        throw new Error(`Error consultando cliente: ${clientError.message}`)
-      }
+      if (clientError) throw new Error(`Error: ${clientError.message}`)
 
-      console.log('✅ Cliente encontrado:', clientData.id)
-
-      // 2. Fetch paralelo de documentos y tipos
       const [docsResponse, typesResponse] = await Promise.all([
         supabase
           .from('documents')
@@ -176,11 +157,7 @@ const useOptimizedClientDocuments = () => {
           .order('code')
       ])
 
-      if (docsResponse.error) {
-        throw new Error(`Error cargando documentos: ${docsResponse.error.message}`)
-      }
-
-      console.log('📄 Documentos cargados:', docsResponse.data?.length || 0)
+      if (docsResponse.error) throw new Error(`Error: ${docsResponse.error.message}`)
 
       setData({
         documents: docsResponse.data || [],
@@ -192,7 +169,6 @@ const useOptimizedClientDocuments = () => {
       })
 
     } catch (error) {
-      console.error('❌ Error en fetchDocuments:', error)
       setData(prev => ({
         ...prev,
         loading: false,
@@ -202,12 +178,11 @@ const useOptimizedClientDocuments = () => {
     }
   }, [userEmail, data.lastFetch])
 
-  // Effect con dependencias específicas para evitar loops
   useEffect(() => {
     if (userEmail && !data.lastFetch) {
       fetchDocuments()
     }
-  }, [userEmail]) // Solo cuando userEmail cambie
+  }, [userEmail])
 
   const refetch = useCallback(() => {
     fetchDocuments(true)
@@ -220,7 +195,7 @@ const useOptimizedClientDocuments = () => {
   }
 }
 
-// Componente principal optimizado
+// Componente principal
 export const ClientDocuments = () => {
   const { documents, documentTypes, loading, error, refetch, hasData, clientExists } = useOptimizedClientDocuments()
   
@@ -229,9 +204,9 @@ export const ClientDocuments = () => {
     status: '',
     type: ''
   })
-  const [showFilters, setShowFilters] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [viewingDocument, setViewingDocument] = useState(null)
 
-  // Memoizar documentos filtrados para evitar re-cálculos
   const filteredDocuments = useMemo(() => {
     return documents.filter(doc => {
       const matchesSearch = !filters.search || 
@@ -246,7 +221,6 @@ export const ClientDocuments = () => {
     })
   }, [documents, filters])
 
-  // Memoizar estadísticas para evitar re-cálculos
   const stats = useMemo(() => {
     if (!documents.length) {
       return {
@@ -267,16 +241,6 @@ export const ClientDocuments = () => {
     }
   }, [documents])
 
-  const clearFilters = useCallback(() => {
-    setFilters({ search: '', status: '', type: '' })
-  }, [])
-
-  const hasActiveFilters = useMemo(() => 
-    Object.values(filters).some(value => value), 
-    [filters]
-  )
-
-  // Estados de carga y error
   if (loading) {
     return (
       <div className="space-y-6">
@@ -303,7 +267,7 @@ export const ClientDocuments = () => {
           <p className="text-gray-600 mb-4">{error}</p>
           <button
             onClick={refetch}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 transition-colors"
           >
             <ArrowPathIcon className="w-4 h-4 mr-2" />
             Reintentar
@@ -342,20 +306,23 @@ export const ClientDocuments = () => {
         <div className="flex gap-2">
           <button 
             onClick={refetch}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
+            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg shadow-sm text-gray-700 bg-white hover:bg-gray-50 transition-colors"
           >
             <ArrowPathIcon className="w-4 h-4 mr-2" />
             Actualizar
           </button>
           
-          <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors">
+          <button 
+            onClick={() => setShowUploadModal(true)}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+          >
             <PlusIcon className="w-4 h-4 mr-2" />
             Subir Documento
           </button>
         </div>
       </div>
 
-      {/* Estadísticas rápidas */}
+      {/* Estadísticas */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 text-center">
           <DocumentTextIcon className="w-6 h-6 text-gray-600 mx-auto mb-2" />
@@ -394,7 +361,7 @@ export const ClientDocuments = () => {
         </div>
       </div>
 
-      {/* Búsqueda simple */}
+      {/* Búsqueda */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
         <div className="relative">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -418,12 +385,15 @@ export const ClientDocuments = () => {
             </h3>
             <p className="text-gray-600 mb-6">
               {!hasData 
-                ? 'Sube tu primer documento para comenzar con la gestión de Protección Civil'
-                : 'Intenta ajustar la búsqueda para encontrar tus documentos'
+                ? 'Sube tu primer documento para comenzar'
+                : 'Intenta ajustar la búsqueda'
               }
             </p>
             {!hasData && (
-              <button className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 transition-colors">
+              <button 
+                onClick={() => setShowUploadModal(true)}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+              >
                 <PlusIcon className="w-4 h-4 mr-2" />
                 Subir Primer Documento
               </button>
@@ -503,6 +473,7 @@ export const ClientDocuments = () => {
                     
                     <div className="flex items-center gap-2 ml-4">
                       <button 
+                        onClick={() => setViewingDocument(document)}
                         className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 transition-colors"
                       >
                         <EyeIcon className="w-4 h-4 mr-1" />
@@ -527,7 +498,23 @@ export const ClientDocuments = () => {
         )}
       </div>
 
-      {/* Resumen de resultados */}
+      {/* Modal de subida */}
+      <UploadDocumentModal
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onSuccess={() => {
+          refetch()
+        }}
+      />
+
+      {/* Modal de visualización */}
+      <DocumentViewerModal
+        isOpen={!!viewingDocument}
+        onClose={() => setViewingDocument(null)}
+        document={viewingDocument}
+      />
+
+      {/* Resumen */}
       {filteredDocuments.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
           <div className="flex justify-between items-center text-sm text-gray-500">

@@ -1,91 +1,131 @@
 // src/components/client/ClientProfile.jsx
-import { useState } from 'react'
-import { useClientProfile } from '../../hooks/useClientData'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import { 
+import { supabase } from '../../lib/supabase'
+import {
   UserCircleIcon,
   BuildingOfficeIcon,
-  MapPinIcon,
-  PhoneIcon,
   EnvelopeIcon,
-  PencilIcon,
-  CheckIcon,
-  XMarkIcon,
+  PhoneIcon,
+  MapPinIcon,
+  KeyIcon,
+  CheckCircleIcon,
+  XCircleIcon,
   ExclamationTriangleIcon,
-  InformationCircleIcon
+  PencilIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline'
-import { toast } from 'react-hot-toast'
 
-const municipalityOptions = [
-  'Amealco de Bonfil', 'Pinal de Amoles', 'Arroyo Seco', 'Cadereyta de Montes',
-  'Colón', 'Corregidora', 'El Marqués', 'Ezequiel Montes', 'Huimilpan',
-  'Jalpan de Serra', 'Landa de Matamoros', 'Pedro Escobedo', 'Peñamiller',
-  'Querétaro', 'San Joaquín', 'San Juan del Río', 'Tequisquiapan', 'Tolimán'
-]
+const useClientProfile = () => {
+  const [data, setData] = useState({
+    client: null,
+    loading: true,
+    error: null
+  })
+  const { user } = useAuth()
 
-const businessTypeOptions = [
-  { value: 'comercial', label: 'Comercial' },
-  { value: 'industrial', label: 'Industrial' },
-  { value: 'servicios', label: 'Servicios' },
-  { value: 'educativo', label: 'Educativo' },
-  { value: 'salud', label: 'Salud' },
-  { value: 'hoteleria', label: 'Hotelería' },
-  { value: 'entretenimiento', label: 'Entretenimiento' },
-  { value: 'gubernamental', label: 'Gubernamental' },
-  { value: 'religioso', label: 'Religioso' }
-]
+  useEffect(() => {
+    fetchProfile()
+  }, [user])
 
-const riskLevelLabels = {
-  'bajo': { label: 'Bajo', color: 'bg-green-100 text-green-800', description: 'Riesgo mínimo' },
-  'medio': { label: 'Medio', color: 'bg-yellow-100 text-yellow-800', description: 'Riesgo moderado' },
-  'alto': { label: 'Alto', color: 'bg-red-100 text-red-800', description: 'Riesgo elevado' }
+  const fetchProfile = async () => {
+    try {
+      setData(prev => ({ ...prev, loading: true, error: null }))
+
+      const userEmail = typeof user === 'string' ? user : user?.email
+      if (!userEmail) return
+
+      const { data: clientData, error: clientError } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('email', userEmail)
+        .single()
+
+      if (clientError?.code === 'PGRST116') {
+        setData({
+          client: null,
+          loading: false,
+          error: null,
+          clientExists: false
+        })
+        return
+      }
+
+      if (clientError) throw clientError
+
+      setData({
+        client: clientData,
+        loading: false,
+        error: null,
+        clientExists: true
+      })
+
+    } catch (error) {
+      console.error('Error cargando perfil:', error)
+      setData(prev => ({
+        ...prev,
+        loading: false,
+        error: error.message
+      }))
+    }
+  }
+
+  return { ...data, refetch: fetchProfile }
 }
 
 export const ClientProfile = () => {
+  const { client, loading, error, refetch, clientExists } = useClientProfile()
   const { user } = useAuth()
-  const { profile, loading, error, updateProfile } = useClientProfile()
   const [isEditing, setIsEditing] = useState(false)
-  const [editForm, setEditForm] = useState({})
+  const [editedData, setEditedData] = useState({})
   const [saving, setSaving] = useState(false)
+  const [saveMessage, setSaveMessage] = useState(null)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
 
-  // Inicializar formulario cuando se carga el perfil o se activa edición
-  useState(() => {
-    if (profile && isEditing && Object.keys(editForm).length === 0) {
-      setEditForm({ ...profile })
+  useEffect(() => {
+    if (client) {
+      setEditedData({
+        contact_name: client.contact_name || '',
+        contact_phone: client.contact_phone || '',
+        contact_email: client.contact_email || client.email || ''
+      })
     }
-  }, [profile, isEditing])
-
-  const handleEdit = () => {
-    setEditForm({ ...profile })
-    setIsEditing(true)
-  }
-
-  const handleCancel = () => {
-    setEditForm({})
-    setIsEditing(false)
-  }
+  }, [client])
 
   const handleSave = async () => {
-    setSaving(true)
     try {
-      const { error } = await updateProfile(editForm)
-      
-      if (error) {
-        toast.error('Error al actualizar el perfil: ' + error)
-      } else {
-        toast.success('Perfil actualizado correctamente')
-        setIsEditing(false)
-        setEditForm({})
-      }
+      setSaving(true)
+      setSaveMessage(null)
+
+      const { error: updateError } = await supabase
+        .from('clients')
+        .update(editedData)
+        .eq('id', client.id)
+
+      if (updateError) throw updateError
+
+      setSaveMessage({ type: 'success', text: 'Perfil actualizado correctamente' })
+      setIsEditing(false)
+      refetch()
+
+      setTimeout(() => setSaveMessage(null), 5000)
+
     } catch (error) {
-      toast.error('Error inesperado al actualizar')
+      console.error('Error actualizando perfil:', error)
+      setSaveMessage({ type: 'error', text: error.message })
     } finally {
       setSaving(false)
     }
   }
 
-  const handleInputChange = (field, value) => {
-    setEditForm(prev => ({ ...prev, [field]: value }))
+  const handleCancel = () => {
+    setEditedData({
+      contact_name: client.contact_name || '',
+      contact_phone: client.contact_phone || '',
+      contact_email: client.contact_email || client.email || ''
+    })
+    setIsEditing(false)
+    setSaveMessage(null)
   }
 
   if (loading) {
@@ -109,9 +149,29 @@ export const ClientProfile = () => {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="text-center py-12">
-          <ExclamationTriangleIcon className="w-12 h-12 text-red-400 mx-auto mb-4" />
+          <XCircleIcon className="w-12 h-12 text-red-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">Error al cargar perfil</h3>
-          <p className="text-gray-600">{error}</p>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={refetch}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 transition-colors"
+          >
+            <ArrowPathIcon className="w-4 h-4 mr-2" />
+            Reintentar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (clientExists === false) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h1 className="text-2xl font-bold text-gray-900 mb-4">Mi Perfil</h1>
+        <div className="text-center py-12">
+          <UserCircleIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Perfil en configuración</h3>
+          <p className="text-gray-600">Tu perfil está siendo configurado por nuestro equipo.</p>
         </div>
       </div>
     )
@@ -124,314 +184,395 @@ export const ClientProfile = () => {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Mi Perfil</h1>
           <p className="text-gray-600 mt-1">
-            Gestiona tu información personal y empresarial
+            Gestiona tu información y preferencias
           </p>
         </div>
-        
-        {!isEditing ? (
-          <button 
-            onClick={handleEdit}
-            className="btn-primary flex items-center gap-2"
-          >
-            <PencilIcon className="w-5 h-5" />
-            Editar Perfil
-          </button>
-        ) : (
-          <div className="flex gap-3">
-            <button 
-              onClick={handleCancel}
-              className="btn-secondary flex items-center gap-2"
-              disabled={saving}
-            >
-              <XMarkIcon className="w-5 h-5" />
-              Cancelar
-            </button>
-            <button 
-              onClick={handleSave}
-              className="btn-primary flex items-center gap-2"
-              disabled={saving}
-            >
-              <CheckIcon className="w-5 h-5" />
-              {saving ? 'Guardando...' : 'Guardar'}
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Información de la cuenta */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center">
-            <UserCircleIcon className="w-10 h-10 text-primary-600" />
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              {user?.user_metadata?.first_name || 'Usuario'} {user?.user_metadata?.last_name || ''}
-            </h2>
-            <p className="text-gray-600">{user?.email}</p>
-            <p className="text-sm text-gray-500">
-              Cliente • Registrado: {new Date(user?.created_at).toLocaleDateString('es-MX')}
+      {/* Mensaje de éxito/error */}
+      {saveMessage && (
+        <div className={`rounded-lg p-4 ${
+          saveMessage.type === 'success' 
+            ? 'bg-green-50 border border-green-200' 
+            : 'bg-red-50 border border-red-200'
+        }`}>
+          <div className="flex items-center">
+            {saveMessage.type === 'success' ? (
+              <CheckCircleIcon className="w-5 h-5 text-green-600 mr-2" />
+            ) : (
+              <XCircleIcon className="w-5 h-5 text-red-600 mr-2" />
+            )}
+            <p className={`text-sm font-medium ${
+              saveMessage.type === 'success' ? 'text-green-800' : 'text-red-800'
+            }`}>
+              {saveMessage.text}
             </p>
           </div>
         </div>
+      )}
 
-        {profile?.client_code && (
-          <div className="bg-gray-50 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium text-gray-900">Código de Cliente</h3>
-                <p className="text-sm text-gray-600">Identificador único en el sistema</p>
-              </div>
-              <code className="bg-white px-3 py-1 rounded border text-sm font-mono">
-                {profile.client_code}
-              </code>
+      {/* Información de la empresa */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-gradient-to-r from-primary-600 to-primary-700 px-6 py-8">
+          <div className="flex items-center gap-4">
+            <div className="w-20 h-20 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
+              <BuildingOfficeIcon className="w-10 h-10 text-white" />
             </div>
-          </div>
-        )}
-      </div>
-
-      {!profile ? (
-        /* Perfil no completado */
-        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6">
-          <div className="flex items-start">
-            <InformationCircleIcon className="w-6 h-6 text-yellow-600 mt-0.5" />
-            <div className="ml-3 flex-1">
-              <h3 className="text-sm font-medium text-yellow-800">
-                Completa tu perfil
-              </h3>
-              <p className="text-sm text-yellow-700 mt-1">
-                Para poder gestionar documentos y establecimientos, necesitas completar 
-                la información de tu perfil empresarial.
-              </p>
-              <button 
-                onClick={handleEdit}
-                className="mt-3 btn-primary"
-              >
-                Completar Perfil
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* Información empresarial */
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-6">Información Empresarial</h2>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Información básica */}
-            <div className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Nombre / Razón Social
-                </label>
-                {isEditing ? (
-                  <input
-                    type="text"
-                    value={editForm.name || ''}
-                    onChange={(e) => handleInputChange('name', e.target.value)}
-                    className="input-primary w-full"
-                    placeholder="Nombre completo o razón social"
-                  />
-                ) : (
-                  <p className="text-gray-900 bg-gray-50 rounded-lg px-3 py-2">
-                    {profile.name || 'No especificado'}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Email
-                </label>
-                {isEditing ? (
-                  <input
-                    type="email"
-                    value={editForm.email || ''}
-                    onChange={(e) => handleInputChange('email', e.target.value)}
-                    className="input-primary w-full"
-                    placeholder="correo@ejemplo.com"
-                  />
-                ) : (
-                  <p className="text-gray-900 bg-gray-50 rounded-lg px-3 py-2 flex items-center gap-2">
-                    <EnvelopeIcon className="w-4 h-4 text-gray-500" />
-                    {profile.email || 'No especificado'}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Teléfono
-                </label>
-                {isEditing ? (
-                  <input
-                    type="tel"
-                    value={editForm.phone || ''}
-                    onChange={(e) => handleInputChange('phone', e.target.value)}
-                    className="input-primary w-full"
-                    placeholder="442 123 4567"
-                  />
-                ) : (
-                  <p className="text-gray-900 bg-gray-50 rounded-lg px-3 py-2 flex items-center gap-2">
-                    <PhoneIcon className="w-4 h-4 text-gray-500" />
-                    {profile.phone || 'No especificado'}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  RFC
-                </label>
-                {isEditing ? (
-                  <input
-                    type="text"
-                    value={editForm.rfc || ''}
-                    onChange={(e) => handleInputChange('rfc', e.target.value.toUpperCase())}
-                    className="input-primary w-full"
-                    placeholder="XXXX000000XXX"
-                    maxLength="13"
-                  />
-                ) : (
-                  <p className="text-gray-900 bg-gray-50 rounded-lg px-3 py-2 font-mono">
-                    {profile.rfc || 'No especificado'}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Información de ubicación y negocio */}
-            <div className="space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Dirección
-                </label>
-                {isEditing ? (
-                  <textarea
-                    value={editForm.address || ''}
-                    onChange={(e) => handleInputChange('address', e.target.value)}
-                    className="input-primary w-full"
-                    rows="3"
-                    placeholder="Calle, número, colonia..."
-                  />
-                ) : (
-                  <p className="text-gray-900 bg-gray-50 rounded-lg px-3 py-2 flex items-start gap-2">
-                    <MapPinIcon className="w-4 h-4 text-gray-500 mt-0.5" />
-                    {profile.address || 'No especificada'}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Municipio
-                </label>
-                {isEditing ? (
-                  <select
-                    value={editForm.municipality || ''}
-                    onChange={(e) => handleInputChange('municipality', e.target.value)}
-                    className="input-primary w-full"
-                  >
-                    <option value="">Selecciona un municipio</option>
-                    {municipalityOptions.map(option => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <p className="text-gray-900 bg-gray-50 rounded-lg px-3 py-2">
-                    {profile.municipality || 'No especificado'}
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tipo de Negocio
-                </label>
-                {isEditing ? (
-                  <select
-                    value={editForm.business_type || ''}
-                    onChange={(e) => handleInputChange('business_type', e.target.value)}
-                    className="input-primary w-full"
-                  >
-                    <option value="">Selecciona un tipo</option>
-                    {businessTypeOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <p className="text-gray-900 bg-gray-50 rounded-lg px-3 py-2 flex items-center gap-2">
-                    <BuildingOfficeIcon className="w-4 h-4 text-gray-500" />
-                    {businessTypeOptions.find(b => b.value === profile.business_type)?.label || 'No especificado'}
-                  </p>
-                )}
-              </div>
-
-              {profile.risk_level && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Nivel de Riesgo
-                  </label>
-                  <div className={`inline-flex items-center px-3 py-2 rounded-lg text-sm font-medium ${riskLevelLabels[profile.risk_level]?.color || 'bg-gray-100 text-gray-800'}`}>
-                    {riskLevelLabels[profile.risk_level]?.label || profile.risk_level}
-                    <span className="ml-2 text-xs">
-                      ({riskLevelLabels[profile.risk_level]?.description})
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Calculado automáticamente según el tipo de negocio y ubicación
-                  </p>
-                </div>
+            <div>
+              <h2 className="text-2xl font-bold text-white">
+                {client.business_name || 'Empresa'}
+              </h2>
+              {client.rfc && (
+                <p className="text-primary-100 mt-1">RFC: {client.rfc}</p>
+              )}
+              {client.client_code && (
+                <p className="text-primary-100">Código: {client.client_code}</p>
               )}
             </div>
           </div>
         </div>
-      )}
 
-      {/* Estadísticas del cliente */}
-      {profile && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Información de la Cuenta</h2>
+        <div className="px-6 py-6 space-y-6">
           
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <div className="text-2xl font-bold text-gray-900">
-                {new Date(profile.created_at).toLocaleDateString('es-MX')}
+          {/* Información no editable */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 mb-4">Información de la Empresa</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex items-start gap-3">
+                <BuildingOfficeIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                <div>
+                  <p className="text-xs text-gray-500">Razón Social</p>
+                  <p className="text-sm font-medium text-gray-900">
+                    {client.business_name || 'No especificado'}
+                  </p>
+                </div>
               </div>
-              <div className="text-sm text-gray-600">Fecha de Registro</div>
+
+              <div className="flex items-start gap-3">
+                <MapPinIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                <div>
+                  <p className="text-xs text-gray-500">Dirección Fiscal</p>
+                  <p className="text-sm font-medium text-gray-900">
+                    {client.address || 'No especificado'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <EnvelopeIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                <div>
+                  <p className="text-xs text-gray-500">Email Principal</p>
+                  <p className="text-sm font-medium text-gray-900">
+                    {client.email}
+                  </p>
+                </div>
+              </div>
+
+              {client.municipality && (
+                <div className="flex items-start gap-3">
+                  <MapPinIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-xs text-gray-500">Municipio</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {client.municipality}, Querétaro
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
-            
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <div className="text-2xl font-bold text-gray-900">
-                {profile.updated_at ? new Date(profile.updated_at).toLocaleDateString('es-MX') : 'Nunca'}
-              </div>
-              <div className="text-sm text-gray-600">Última Actualización</div>
+          </div>
+
+          {/* Información de contacto - Editable */}
+          <div className="border-t border-gray-200 pt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900">Información de Contacto</h3>
+              {!isEditing && (
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+                >
+                  <PencilIcon className="w-4 h-4 mr-1" />
+                  Editar
+                </button>
+              )}
             </div>
-            
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <div className={`text-2xl font-bold ${profile.status === 'active' ? 'text-green-600' : 'text-gray-600'}`}>
-                {profile.status === 'active' ? 'Activo' : 'Inactivo'}
+
+            {isEditing ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nombre de Contacto
+                  </label>
+                  <input
+                    type="text"
+                    value={editedData.contact_name}
+                    onChange={(e) => setEditedData(prev => ({ ...prev, contact_name: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="Nombre completo"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Teléfono de Contacto
+                  </label>
+                  <input
+                    type="tel"
+                    value={editedData.contact_phone}
+                    onChange={(e) => setEditedData(prev => ({ ...prev, contact_phone: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="(442) 123 4567"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email de Contacto
+                  </label>
+                  <input
+                    type="email"
+                    value={editedData.contact_email}
+                    onChange={(e) => setEditedData(prev => ({ ...prev, contact_email: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="contacto@empresa.com"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="flex-1 inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:bg-gray-400 transition-colors"
+                  >
+                    {saving ? (
+                      <>
+                        <ArrowPathIcon className="w-4 h-4 mr-2 animate-spin" />
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircleIcon className="w-4 h-4 mr-2" />
+                        Guardar Cambios
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={handleCancel}
+                    disabled={saving}
+                    className="px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </div>
-              <div className="text-sm text-gray-600">Estado de la Cuenta</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-start gap-3">
+                  <UserCircleIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-xs text-gray-500">Contacto</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {client.contact_name || 'No especificado'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <PhoneIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-xs text-gray-500">Teléfono</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {client.contact_phone || 'No especificado'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3 md:col-span-2">
+                  <EnvelopeIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-xs text-gray-500">Email de Contacto</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {client.contact_email || client.email}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Seguridad */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h3 className="text-sm font-semibold text-gray-900 mb-4">Seguridad</h3>
+        
+        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+          <div className="flex items-start gap-3">
+            <KeyIcon className="w-5 h-5 text-gray-400 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-gray-900">Contraseña</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Última actualización: {new Date().toLocaleDateString('es-MX')}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowPasswordModal(true)}
+            className="px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+          >
+            Cambiar
+          </button>
+        </div>
+
+        <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-start gap-2">
+            <ExclamationTriangleIcon className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-blue-800">
+              <p className="font-medium">Recomendaciones de seguridad:</p>
+              <ul className="list-disc list-inside mt-1 space-y-1 text-blue-700">
+                <li>Usa una contraseña única de al menos 8 caracteres</li>
+                <li>Combina mayúsculas, minúsculas, números y símbolos</li>
+                <li>No compartas tu contraseña con nadie</li>
+              </ul>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Información adicional */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
-        <div className="flex items-start">
-          <InformationCircleIcon className="w-6 h-6 text-blue-600 mt-0.5" />
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-blue-800">
-              Información importante sobre tu perfil
-            </h3>
-            <div className="text-sm text-blue-700 mt-2 space-y-1">
-              <p>• Tu información personal se mantiene segura y privada</p>
-              <p>• Los cambios en el tipo de negocio pueden afectar los documentos requeridos</p>
-              <p>• El nivel de riesgo se calcula automáticamente y determina la documentación necesaria</p>
-              <p>• Para cambios en datos críticos (RFC, razón social), contacta con soporte</p>
+      {/* Modal de cambio de contraseña */}
+      {showPasswordModal && (
+        <PasswordChangeModal onClose={() => setShowPasswordModal(false)} />
+      )}
+    </div>
+  )
+}
+
+// Modal para cambio de contraseña
+const PasswordChangeModal = ({ onClose }) => {
+  const [passwords, setPasswords] = useState({
+    current: '',
+    new: '',
+    confirm: ''
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setError(null)
+
+    if (passwords.new !== passwords.confirm) {
+      setError('Las contraseñas no coinciden')
+      return
+    }
+
+    if (passwords.new.length < 8) {
+      setError('La contraseña debe tener al menos 8 caracteres')
+      return
+    }
+
+    try {
+      setLoading(true)
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: passwords.new
+      })
+
+      if (updateError) throw updateError
+
+      setSuccess(true)
+      setTimeout(() => {
+        onClose()
+      }, 2000)
+
+    } catch (error) {
+      console.error('Error cambiando contraseña:', error)
+      setError(error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+        <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" onClick={onClose}></div>
+
+        <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+          
+          <div className="bg-white px-6 pt-6 pb-4">
+            <div className="flex items-center mb-4">
+              <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center mr-3">
+                <KeyIcon className="w-5 h-5 text-primary-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Cambiar Contraseña
+              </h3>
             </div>
+
+            {success ? (
+              <div className="py-8 text-center">
+                <CheckCircleIcon className="w-12 h-12 text-green-600 mx-auto mb-4" />
+                <p className="text-green-800 font-medium">
+                  Contraseña actualizada correctamente
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nueva Contraseña
+                  </label>
+                  <input
+                    type="password"
+                    value={passwords.new}
+                    onChange={(e) => setPasswords(prev => ({ ...prev, new: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    required
+                    minLength={8}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Confirmar Contraseña
+                  </label>
+                  <input
+                    type="password"
+                    value={passwords.confirm}
+                    onChange={(e) => setPasswords(prev => ({ ...prev, confirm: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    required
+                    minLength={8}
+                  />
+                </div>
+
+                {error && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-800">{error}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="flex-1 inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-primary-600 hover:bg-primary-700 disabled:bg-gray-400 transition-colors"
+                  >
+                    {loading ? 'Cambiando...' : 'Cambiar Contraseña'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    disabled={loading}
+                    className="px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       </div>

@@ -1,21 +1,18 @@
 // src/components/layouts/ClientLayout.jsx
-// CORREGIR LAS RUTAS PARA COINCIDIR CON App.jsx
-
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { NotificationButton } from '../client/NotificationButton'
 import {
   HomeIcon,
   DocumentTextIcon,
   BuildingOfficeIcon,
   UserCircleIcon,
-  BellIcon,
   Bars3Icon,
   XMarkIcon,
   ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline'
 
-// ✅ RUTAS CORREGIDAS - coinciden con App.jsx
 const navigation = [
   { name: 'Inicio', href: '/dashboard/cliente', icon: HomeIcon, current: false },
   { name: 'Mis Documentos', href: '/dashboard/cliente/documents', icon: DocumentTextIcon, current: false },
@@ -29,12 +26,10 @@ function classNames(...classes) {
 
 export const ClientLayout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
-  const { user, userRole, logout } = useAuth()  // ✅ Cambiar signOut por logout
+  const { user, userRole, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
 
-  // Actualizar navegación activa
   const updatedNavigation = navigation.map(item => ({
     ...item,
     current: location.pathname === item.href
@@ -42,7 +37,7 @@ export const ClientLayout = ({ children }) => {
 
   const handleSignOut = async () => {
     try {
-      await logout()  // ✅ Cambiar signOut por logout
+      await logout()
       navigate('/login')
     } catch (error) {
       console.error('Error al cerrar sesión:', error)
@@ -187,81 +182,8 @@ export const ClientLayout = ({ children }) => {
             </div>
             
             <div className="flex items-center gap-x-4 lg:gap-x-6">
-              {/* Notificaciones */}
-              <div className="relative">
-                <button
-                  type="button"
-                  className="-m-2.5 p-2.5 text-gray-400 hover:text-gray-500"
-                  onClick={() => setNotificationsOpen(!notificationsOpen)}
-                >
-                  <BellIcon className="h-6 w-6" />
-                  {/* Badge de notificaciones */}
-                  <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full text-xs text-white flex items-center justify-center">
-                    2
-                  </span>
-                </button>
-
-                {/* Dropdown de notificaciones */}
-                {notificationsOpen && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
-                    <div className="p-4 border-b border-gray-200">
-                      <h3 className="text-sm font-medium text-gray-900">Notificaciones</h3>
-                    </div>
-                    <div className="max-h-64 overflow-y-auto">
-                      <div className="p-4 hover:bg-gray-50">
-                        <div className="flex">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-gray-900">
-                              Documento por vencer
-                            </p>
-                            <p className="text-sm text-gray-600">
-                              Tu FEII-01 vence en 15 días
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Hace 2 horas
-                            </p>
-                          </div>
-                          <div className="ml-3">
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-warning-100 text-warning-800">
-                              Urgente
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="p-4 hover:bg-gray-50">
-                        <div className="flex">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-gray-900">
-                              Documento aprobado
-                            </p>
-                            <p className="text-sm text-gray-600">
-                              Tu FEII-02 ha sido aprobado
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Ayer
-                            </p>
-                          </div>
-                          <div className="ml-3">
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-success-100 text-success-800">
-                              Aprobado
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="p-4 border-t border-gray-200">
-                      <Link
-                        to="/dashboard/cliente/notifications"
-                        className="text-sm text-primary-600 hover:text-primary-700 font-medium"
-                        onClick={() => setNotificationsOpen(false)}
-                      >
-                        Ver todas las notificaciones
-                      </Link>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* Botón de notificaciones con sistema real */}
+              <NotificationButton />
 
               {/* Perfil de usuario */}
               <div className="flex items-center gap-x-2">
@@ -288,14 +210,6 @@ export const ClientLayout = ({ children }) => {
           </div>
         </main>
       </div>
-
-      {/* Overlay para cerrar notificaciones */}
-      {notificationsOpen && (
-        <div 
-          className="fixed inset-0 z-40" 
-          onClick={() => setNotificationsOpen(false)}
-        />
-      )}
     </div>
   )
 }
