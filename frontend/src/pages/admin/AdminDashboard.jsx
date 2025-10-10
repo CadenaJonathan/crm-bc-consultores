@@ -41,7 +41,7 @@
     XCircle,       // ← Y este
     FileCheck      // ← Y este
   } from 'lucide-react';
-
+  import NuevoClienteForm from '../../components/admin/NuevoClienteForm';
   // Estado global persistente (mantener igual)
   let appData = {
     stats: {
@@ -595,7 +595,9 @@
   // Componente Clientes con filtros mejorados por giro y riesgo
   const GestionClientes = () => {
     const { data, error, refresh } = useAppData();
-    const [search, setSearch] = useState('');
+    const [showNewClientModal, setShowNewClientModal] = useState(false);
+    const { user } = useAuth();
+    const [search, setSearch] = useState(''); 
     const [municipalityFilter, setMunicipalityFilter] = useState('');
     const [businessTypeFilter, setBusinessTypeFilter] = useState('');
     const [riskLevelFilter, setRiskLevelFilter] = useState('');
@@ -707,6 +709,7 @@
           <div className="flex justify-between items-center mb-6">
             <div>
               <h2 className="text-2xl font-bold text-gray-900">Gestión de Clientes</h2>
+              
               <p className="text-gray-600">
                 {filteredClients.length} de {data.clients.length} clientes
                 {hasActiveFilters && (
@@ -732,10 +735,13 @@
                 <BarChart3 className="h-4 w-4 mr-2" />
                 Actualizar
               </button>
-              <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center">
-                <Plus className="h-4 w-4 mr-2" />
-                Nuevo Cliente
-              </button>
+                <button 
+                  onClick={() => setShowNewClientModal(true)}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                   Nuevo Cliente
+                </button>
             </div>
           </div>
           
@@ -946,6 +952,25 @@
             </div>
           )}
         </div>
+         {showNewClientModal && (
+        <NuevoClienteForm
+          onClose={() => setShowNewClientModal(false)}
+          onSuccess={(result) => {
+            setShowNewClientModal(false);
+            refresh(true);
+            toast.success(
+              <div>
+                <p className="font-medium">¡Cliente creado exitosamente!</p>
+                <p className="text-sm mt-1">Código: <strong>{result.clientCode}</strong></p>
+                <p className="text-xs text-gray-600 mt-1">
+                  {result.documentsAssigned} documentos asignados
+                </p>
+              </div>,
+              { duration: 5000 }
+            );
+          }}
+        />
+      )}
       </div>
     );
   };
