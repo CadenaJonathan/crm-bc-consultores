@@ -6,15 +6,14 @@ import { toast } from 'react-hot-toast';
 
 /**
  * VISTA PREVIA DEL CÓDIGO DE CLIENTE
- * Muestra cómo se verá el identificador según el nivel de riesgo
  */
 export const generateClientCodePreview = (riskLevel) => {
   const year = new Date().getFullYear();
   
   const prefixes = {
-    'alto': 'CCR',    // Carta de Corresponsabilidad
-    'medio': 'RM',    // Riesgo Medio
-    'bajo': 'RB'      // Riesgo Bajo
+    'alto': 'CCR',
+    'medio': 'RM',
+    'bajo': 'RB'
   };
   
   const prefix = prefixes[riskLevel] || 'GEN';
@@ -30,7 +29,6 @@ export const generateClientCodePreview = (riskLevel) => {
 
 /**
  * VALIDAR RFC EN SUPABASE
- * Verifica si el RFC ya existe en la base de datos
  */
 export const validateRFCInDB = async (rfc) => {
   try {
@@ -39,7 +37,6 @@ export const validateRFCInDB = async (rfc) => {
     
     if (error) throw error;
     
-    // Verificar si ya existe
     const { data: existing, error: checkError } = await supabase
       .from('clients')
       .select('id, name, rfc')
@@ -65,7 +62,6 @@ export const validateRFCInDB = async (rfc) => {
 
 /**
  * VALIDAR EMAIL ÚNICO
- * Verifica si el email ya está registrado
  */
 export const validateEmailUnique = async (email) => {
   try {
@@ -89,7 +85,6 @@ export const validateEmailUnique = async (email) => {
 
 /**
  * OBTENER DOCUMENTOS REQUERIDOS
- * Consulta qué documentos se deben asignar según clasificación del cliente
  */
 export const getRequiredDocuments = async (municipality, businessType, businessSubtype, riskLevel) => {
   try {
@@ -121,10 +116,13 @@ export const getRequiredDocuments = async (municipality, businessType, businessS
 
 /**
  * CREAR CLIENTE EN SUPABASE
- * Función principal que crea el cliente y asigna documentos
  */
 export const createClient = async (formData, currentUserId) => {
   try {
+    console.log('=== INICIANDO CREACIÓN DE CLIENTE ===');
+    console.log('User ID:', currentUserId);
+    console.log('Form Data:', formData);
+
     // Preparar datos JSONB
     const legalContact = formData.legal_contact?.nombre ? {
       nombre: formData.legal_contact.nombre,
@@ -172,6 +170,7 @@ export const createClient = async (formData, currentUserId) => {
     } : null;
 
     // Llamar a la función de Supabase
+    console.log('Llamando a create_client_with_validations...');
     const { data, error } = await supabase.rpc('create_client_with_validations', {
       p_name: formData.name,
       p_commercial_name: formData.commercial_name || null,
@@ -205,12 +204,25 @@ export const createClient = async (formData, currentUserId) => {
       p_created_by: currentUserId
     });
 
-    if (error) throw error;
+    console.log('Respuesta de Supabase:', { data, error });
+
+    if (error) {
+      console.error('Error de Supabase:', error);
+      throw new Error(error.message || 'Error en la base de datos');
+    }
 
     // Verificar respuesta
+    if (!data) {
+      throw new Error('No se recibió respuesta de la base de datos');
+    }
+
     if (!data.success) {
       throw new Error(data.error || 'Error desconocido al crear cliente');
     }
+
+    console.log('=== CLIENTE CREADO EXITOSAMENTE ===');
+    console.log('Client ID:', data.client_id);
+    console.log('Client Code:', data.client_code);
 
     return {
       success: true,
@@ -220,7 +232,10 @@ export const createClient = async (formData, currentUserId) => {
     };
 
   } catch (error) {
-    console.error('Error en createClient:', error);
+    console.error('=== ERROR EN createClient ===');
+    console.error('Error completo:', error);
+    console.error('Stack:', error.stack);
+    
     return {
       success: false,
       error: error.message || 'Error al crear el cliente'
@@ -230,7 +245,6 @@ export const createClient = async (formData, currentUserId) => {
 
 /**
  * COMPONENTE DE VISTA PREVIA DEL CÓDIGO
- * Muestra en tiempo real cómo se verá el identificador
  */
 export const ClientCodePreview = ({ riskLevel }) => {
   if (!riskLevel) return null;
@@ -273,7 +287,6 @@ export const ClientCodePreview = ({ riskLevel }) => {
 
 /**
  * COMPONENTE DE PREVIEW DE DOCUMENTOS REQUERIDOS
- * Muestra qué documentos se asignarán al cliente
  */
 export const RequiredDocumentsPreview = ({ municipality, businessType, businessSubtype, riskLevel, documents }) => {
   if (!documents || documents.length === 0) {

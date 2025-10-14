@@ -5,6 +5,7 @@ import {
   Zap, Droplet, Users as UsersIcon, GraduationCap,
   Hospital, Factory, HardHat, Fuel 
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   createClient, 
@@ -128,7 +129,12 @@ const NuevoClienteForm = ({ onClose, onSuccess }) => {
     { value: 'rehabilitacion_adicciones', label: 'Rehabilitación/Adicciones', icon: Hospital },
     { value: 'construccion', label: 'Construcción', icon: HardHat },
     { value: 'servicios_generales', label: 'Servicios Generales', icon: Building }
+    
   ];
+  const getBusinessTypeLabel = (value) => {
+  const type = businessTypes.find(bt => bt.value === value);
+  return type ? type.label : value;
+};
 
   const riskLevels = [
     { value: 'bajo', label: 'Bajo Riesgo', color: 'text-green-700 bg-green-50 border-green-200' },
@@ -247,39 +253,44 @@ const NuevoClienteForm = ({ onClose, onSuccess }) => {
     }));
   };
 
-  const handleSubmit = async () => {
-    if (!validateStep(currentStep)) return;
+const handleSubmit = async () => {
+  if (!validateStep(currentStep)) return;
+  
+  setLoading(true);
+  try {
+    // Obtener user ID desde Supabase Auth directamente
+    const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
     
-    setLoading(true);
-    try {
-      // Obtener user ID desde auth
-      const currentUserId = user?.id;
-      
-      if (!currentUserId) {
-        throw new Error('No se pudo obtener el ID del usuario');
-      }
-
-      // Crear cliente en Supabase
-      const result = await createClient(formData, currentUserId);
-      
-      if (result.success) {
-        toast.success(`Cliente ${result.clientCode} creado exitosamente`);
-        onSuccess?.({ 
-          clientId: result.clientId, 
-          clientCode: result.clientCode,
-          documentsAssigned: requiredDocs.filter(d => d.is_mandatory).length
-        });
-      } else {
-        toast.error(result.error || 'Error al crear el cliente');
-      }
-      
-    } catch (error) {
-      console.error('Error creando cliente:', error);
-      toast.error(error.message || 'Error inesperado al crear el cliente');
-    } finally {
-      setLoading(false);
+    if (authError || !authUser?.id) {
+      throw new Error('No se pudo autenticar. Por favor, inicia sesión nuevamente.');
     }
-  };
+
+    const currentUserId = authUser.id;
+    
+    console.log('Creating client with user ID:', currentUserId);
+
+    // Crear cliente en Supabase
+    const result = await createClient(formData, currentUserId);
+    
+    if (result.success) {
+      toast.success(`Cliente ${result.clientCode} creado exitosamente`);
+      onSuccess?.({ 
+        clientId: result.clientId, 
+        clientCode: result.clientCode,
+        documentsAssigned: requiredDocs.filter(d => d.is_mandatory).length
+      });
+    } else {
+      toast.error(result.error || 'Error al crear el cliente');
+    }
+    
+  } catch (error) {
+    console.error('Error creando cliente:', error);
+    toast.error(error.message || 'Error inesperado al crear el cliente');
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   const renderStepContent = () => {
     switch(currentStep) {
