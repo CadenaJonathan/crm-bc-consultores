@@ -61,18 +61,34 @@ export const validateRFCInDB = async (rfc) => {
 };
 
 /**
- * VALIDAR EMAIL ÚNICO
+ * VALIDAR EMAIL ÚNICO (para usuarios de cliente Y email de empresa)
  */
 export const validateEmailUnique = async (email) => {
   try {
-    const { data, error } = await supabase
-      .rpc('email_exists', { email_input: email.toLowerCase() });
+    // Verificar en clients
+    const { data: clientData, error: clientError } = await supabase
+      .from('clients')
+      .select('id, name')
+      .eq('email', email.toLowerCase())
+      .maybeSingle();
     
-    if (error) throw error;
+    if (clientError && clientError.code !== 'PGRST116') throw clientError;
+    
+    // Verificar en client_users
+    const { data: userData, error: userError } = await supabase
+      .from('client_users')
+      .select('id, email')
+      .eq('email', email.toLowerCase())
+      .maybeSingle();
+    
+    if (userError && userError.code !== 'PGRST116') throw userError;
+    
+    const exists = !!(clientData || userData);
     
     return {
-      isUnique: !data,
-      exists: data
+      isUnique: !exists,
+      exists: exists,
+      existingType: clientData ? 'empresa' : userData ? 'usuario' : null
     };
   } catch (error) {
     console.error('Error validando email:', error);
@@ -115,7 +131,7 @@ export const getRequiredDocuments = async (municipality, businessType, businessS
 };
 
 /**
- * CREAR CLIENTE EN SUPABASE
+ * CREAR CLIENTE Y USUARIO EN SUPABASE
  */
 export const createClient = async (formData, currentUserId) => {
   try {
@@ -133,8 +149,10 @@ export const createClient = async (formData, currentUserId) => {
 
     const operationalContact = formData.operational_contact?.nombre ? {
       nombre: formData.operational_contact.nombre,
+      area: formData.operational_contact.area,
       cargo: formData.operational_contact.cargo,
       telefono: formData.operational_contact.telefono,
+      celular: formData.operational_contact.celular,
       email: formData.operational_contact.email
     } : null;
 
@@ -169,66 +187,161 @@ export const createClient = async (formData, currentUserId) => {
       capacitacion_pc: formData.staff_data.capacitacion_pc || false
     } : null;
 
-    // Llamar a la función de Supabase
-    console.log('Llamando a create_client_with_validations...');
-    const { data, error } = await supabase.rpc('create_client_with_validations', {
-      p_name: formData.name,
-      p_commercial_name: formData.commercial_name || null,
-      p_rfc: formData.rfc.toUpperCase(),
-      p_email: formData.email.toLowerCase(),
-      p_phone: formData.phone,
-      p_physical_address: formData.physical_address,
-      p_fiscal_address: formData.fiscal_address || formData.physical_address,
-      p_municipality: formData.municipality,
-      p_business_type: formData.business_type,
-      p_business_subtype: formData.business_subtype || null,
-      p_risk_level: formData.risk_level,
-      p_legal_contact: legalContact,
-      p_operational_contact: operationalContact,
-      p_property_age: formData.property_age ? parseInt(formData.property_age) : null,
-      p_previous_uses: formData.previous_uses || null,
-      p_total_surface: formData.total_surface ? parseFloat(formData.total_surface) : null,
-      p_built_surface: formData.built_surface ? parseFloat(formData.built_surface) : null,
-      p_boundaries: boundaries,
-      p_coordinates: coordinates,
-      p_electrical_voltage: formData.electrical_voltage ? parseInt(formData.electrical_voltage) : null,
-      p_electrical_config: electricalConfig,
-      p_gas_installation: gasInstallation,
-      p_staff_data: staffData,
-      p_floating_population: formData.floating_population ? parseInt(formData.floating_population) : null,
-      p_educational_data: formData.educational_data || null,
-      p_medical_data: formData.medical_data || null,
-      p_industrial_data: formData.industrial_data || null,
-      p_construction_data: formData.construction_data || null,
-      p_hydrocarbon_data: formData.hydrocarbon_data || null,
-      p_created_by: currentUserId
-    });
+    // PASO 1: Generar código de cliente
+    const { data: codeData, error: codeError } = await supabase
+      .rpc('generate_client_code', { p_risk_level: formData.risk_level });
 
-    console.log('Respuesta de Supabase:', { data, error });
+    if (codeError) throw new Error('Error generando código: ' + codeError.message);
+    
+    const clientCode = codeData;
 
-    if (error) {
-      console.error('Error de Supabase:', error);
-      throw new Error(error.message || 'Error en la base de datos');
+    // PASO 2: Insertar cliente
+    const clientData = {
+      name: formData.name,
+      commercial_name: formData.commercial_name || null,
+      rfc: formData.rfc.toUpperCase(),
+      phone: formData.phone,
+      physical_address: formData.physical_address,
+      fiscal_address: formData.fiscal_address || formData.physical_address,
+      municipality: formData.municipality,
+      business_type: formData.business_type,
+      business_subtype: formData.business_subtype || null,
+      risk_level: formData.risk_level,
+      client_code: clientCode,
+      legal_contact: legalContact,
+      operational_contact: operationalContact,
+      property_age: formData.property_age ? parseInt(formData.property_age) : null,
+      previous_uses: formData.previous_uses || null,
+      total_surface: formData.total_surface ? parseFloat(formData.total_surface) : null,
+      built_surface: formData.built_surface ? parseFloat(formData.built_surface) : null,
+      boundaries: boundaries,
+      coordinates: coordinates,
+      electrical_voltage: formData.electrical_voltage ? parseInt(formData.electrical_voltage) : null,
+      electrical_config: electricalConfig,
+      gas_installation: gasInstallation,
+      staff_data: staffData,
+      floating_population: formData.floating_population ? parseInt(formData.floating_population) : null,
+      educational_data: formData.educational_data || null,
+      medical_data: formData.medical_data || null,
+      industrial_data: formData.industrial_data || null,
+      construction_data: formData.construction_data || null,
+      hydrocarbon_data: formData.hydrocarbon_data || null,
+      created_by: currentUserId,
+      status: 'active'
+    };
+
+    console.log('Insertando cliente:', clientData);
+
+    const { data: insertedClient, error: insertError } = await supabase
+      .from('clients')
+      .insert([clientData])
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error('Error insertando cliente:', insertError);
+      throw new Error(insertError.message);
     }
 
-    // Verificar respuesta
-    if (!data) {
-      throw new Error('No se recibió respuesta de la base de datos');
+    console.log('Cliente insertado:', insertedClient);
+
+    // PASO 3: Crear usuario del cliente (si hay operational_contact)
+    let clientUserId = null;
+    let temporaryPassword = null;
+
+    if (formData.operational_contact?.email && formData.operational_contact?.nombre) {
+      console.log('Creando usuario del cliente...');
+      
+      const { data: userResult, error: userError } = await supabase
+        .rpc('create_client_user_account', {
+          p_client_id: insertedClient.id,
+          p_email: formData.operational_contact.email,
+          p_full_name: formData.operational_contact.nombre,
+          p_area: formData.operational_contact.area || 'Seguridad e Higiene',
+          p_cargo: formData.operational_contact.cargo || 'Responsable de trámites',
+          p_phone: formData.operational_contact.telefono,
+          p_celular: formData.operational_contact.celular || null,
+          p_created_by: currentUserId
+        });
+
+      if (userError) {
+        console.error('Error creando usuario:', userError);
+        // No lanzar error, solo registrar
+      } else if (userResult?.success) {
+        clientUserId = userResult.user_id;
+        temporaryPassword = userResult.temporary_password;
+        console.log('Usuario creado:', clientUserId);
+        
+        // TODO: Aquí deberías enviar el email con las credenciales
+        // await sendCredentialsEmail(formData.operational_contact.email, temporaryPassword);
+      }
     }
 
-    if (!data.success) {
-      throw new Error(data.error || 'Error desconocido al crear cliente');
+    // PASO 4: Asignar documentos requeridos
+    const docsResult = await getRequiredDocuments(
+      formData.municipality,
+      formData.business_type,
+      formData.business_subtype,
+      formData.risk_level
+    );
+
+    if (docsResult.success && docsResult.documents.length > 0) {
+      const documentsToAssign = docsResult.documents.map(doc => ({
+        client_id: insertedClient.id,
+        document_type_id: doc.document_type_id,
+        status: 'pending',
+        is_mandatory: doc.is_mandatory,
+        uploaded_by: doc.uploaded_by || 'client', // 'client', 'consultant', 'both'
+        assigned_to: doc.uploaded_by === 'consultant' ? 'consultant' : 'client',
+        created_by: currentUserId
+      }));
+
+      const { error: docsError } = await supabase
+        .from('client_documents')
+        .insert(documentsToAssign);
+
+      if (docsError) {
+        console.error('Error asignando documentos:', docsError);
+      } else {
+        console.log(`${documentsToAssign.length} documentos asignados correctamente`);
+      }
+    }
+
+    // PASO 5: Asignar documentos adicionales personalizados (si los hay)
+    if (formData.additional_documents && formData.additional_documents.length > 0) {
+      const additionalDocsToAssign = formData.additional_documents.map(docTypeId => ({
+        client_id: insertedClient.id,
+        document_type_id: docTypeId,
+        status: 'pending',
+        is_mandatory: false,
+        uploaded_by: 'client',
+        assigned_to: 'client',
+        created_by: currentUserId
+      }));
+
+      const { error: additionalDocsError } = await supabase
+        .from('client_documents')
+        .insert(additionalDocsToAssign);
+
+      if (additionalDocsError) {
+        console.error('Error asignando documentos adicionales:', additionalDocsError);
+      } else {
+        console.log(`${additionalDocsToAssign.length} documentos adicionales asignados`);
+      }
     }
 
     console.log('=== CLIENTE CREADO EXITOSAMENTE ===');
-    console.log('Client ID:', data.client_id);
-    console.log('Client Code:', data.client_code);
+    console.log('Client ID:', insertedClient.id);
+    console.log('Client Code:', clientCode);
+    console.log('Client User ID:', clientUserId);
 
     return {
       success: true,
-      clientId: data.client_id,
-      clientCode: data.client_code,
-      message: `Cliente creado exitosamente con código ${data.client_code}`
+      clientId: insertedClient.id,
+      clientCode: clientCode,
+      clientUserId: clientUserId,
+      temporaryPassword: temporaryPassword, // Solo para log, NO mostrar al usuario
+      message: `Cliente creado exitosamente con código ${clientCode}`
     };
 
   } catch (error) {
@@ -302,6 +415,11 @@ export const RequiredDocumentsPreview = ({ municipality, businessType, businessS
   const mandatory = documents.filter(d => d.is_mandatory);
   const optional = documents.filter(d => !d.is_mandatory);
 
+  // Agrupar por quien debe subirlos
+  const clientDocs = documents.filter(d => d.uploaded_by === 'client');
+  const consultantDocs = documents.filter(d => d.uploaded_by === 'consultant');
+  const bothDocs = documents.filter(d => d.uploaded_by === 'both');
+
   return (
     <div className="space-y-3">
       {mandatory.length > 0 && (
@@ -315,6 +433,13 @@ export const RequiredDocumentsPreview = ({ municipality, businessType, businessS
                 <span className="mr-2">•</span>
                 <span>
                   <strong>{doc.document_code}</strong> - {doc.document_name}
+                  {doc.uploaded_by && (
+                    <span className="ml-2 px-2 py-0.5 bg-red-100 rounded text-red-800">
+                      {doc.uploaded_by === 'client' ? '👤 Cliente' : 
+                       doc.uploaded_by === 'consultant' ? '🏢 Consultoría' : 
+                       '👥 Ambos'}
+                    </span>
+                  )}
                   {doc.validity_months && (
                     <span className="text-red-600 ml-1">
                       (Vigencia: {doc.validity_months} meses)
@@ -346,9 +471,20 @@ export const RequiredDocumentsPreview = ({ municipality, businessType, businessS
       )}
 
       <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-        <p className="text-xs text-green-800">
-          ✓ Se asignarán automáticamente {mandatory.length} documentos obligatorios al crear el cliente
+        <p className="text-xs text-green-800 mb-2">
+          ✓ Se asignarán automáticamente {mandatory.length} documentos obligatorios
         </p>
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <div className="bg-white rounded px-2 py-1">
+            <span className="font-medium">👤 Cliente:</span> {clientDocs.length}
+          </div>
+          <div className="bg-white rounded px-2 py-1">
+            <span className="font-medium">🏢 Consultoría:</span> {consultantDocs.length}
+          </div>
+          <div className="bg-white rounded px-2 py-1">
+            <span className="font-medium">👥 Ambos:</span> {bothDocs.length}
+          </div>
+        </div>
       </div>
     </div>
   );
