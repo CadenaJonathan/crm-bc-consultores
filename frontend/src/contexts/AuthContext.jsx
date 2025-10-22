@@ -38,7 +38,7 @@ const getUserRole = async (userEmail) => {
       .from('users')
       .select('role, email')
       .eq('email', userEmail)
-      .single();
+      .maybeSingle();
 
     let userInfo;
 

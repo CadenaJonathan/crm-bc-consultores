@@ -2,25 +2,25 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabaseServiceKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase credentials not found. Authentication will not work.')
   console.log('Expected:', {
     VITE_SUPABASE_URL: supabaseUrl ? '✅ Found' : '❌ Missing',
-    VITE_SUPABASE_ANON_KEY: supabaseAnonKey ? '✅ Found' : '❌ Missing'
+    VITE_SUPABASE_ANON_KEY: supabaseAnonKey ? '✅ Found' : '❌ Missing',
+    VITE_SUPABASE_SERVICE_ROLE_KEY: supabaseServiceKey ? '✅ Found' : '❌ Missing'
   })
 }
 
-export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
+// Cliente principal (anon key) - Para uso general
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+// Cliente admin (service role key) - Solo para operaciones administrativas
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: true
-  },
-  realtime: {
-    params: {
-      eventsPerSecond: 2
-    }
+    autoRefreshToken: false,
+    persistSession: false
   }
 })
 

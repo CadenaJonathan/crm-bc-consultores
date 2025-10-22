@@ -245,37 +245,83 @@ export const createClient = async (formData, currentUserId) => {
 
     console.log('Cliente insertado:', insertedClient);
 
-    // PASO 3: Crear usuario del cliente (si hay operational_contact)
-    let clientUserId = null;
-    let temporaryPassword = null;
+// PASO 3: Crear usuario del cliente
+let clientUserId = null;
+let temporaryPassword = null;
+let authUserId = null;
 
-    if (formData.operational_contact?.email && formData.operational_contact?.nombre) {
-      console.log('Creando usuario del cliente...');
+if (formData.operational_contact?.email && formData.operational_contact?.nombre) {
+  console.log('Creando usuario del cliente...');
+  
+  // 3A: Crear en client_users
+  const { data: userResult, error: userError } = await supabase
+    .rpc('create_client_user_account', {
+      p_client_id: insertedClient.id,
+      p_email: formData.operational_contact.email,
+      p_full_name: formData.operational_contact.nombre,
+      p_area: formData.operational_contact.area || 'Seguridad e Higiene',
+      p_cargo: formData.operational_contact.cargo || 'Responsable de trámites',
+      p_phone: formData.operational_contact.telefono,
+      p_celular: formData.operational_contact.celular || null,
+      p_created_by: currentUserId
+    });
+
+  if (userError) {
+    console.error('Error creando usuario:', userError);
+  } else if (userResult?.success) {
+    clientUserId = userResult.user_id;
+    temporaryPassword = userResult.temporary_password;
+    console.log('Usuario creado en client_users:', clientUserId);
+    
+    // 3B: Crear en Supabase Auth
+    try {
+      console.log('Creando usuario en Supabase Auth...');
       
-      const { data: userResult, error: userError } = await supabase
-        .rpc('create_client_user_account', {
-          p_client_id: insertedClient.id,
-          p_email: formData.operational_contact.email,
-          p_full_name: formData.operational_contact.nombre,
-          p_area: formData.operational_contact.area || 'Seguridad e Higiene',
-          p_cargo: formData.operational_contact.cargo || 'Responsable de trámites',
-          p_phone: formData.operational_contact.telefono,
-          p_celular: formData.operational_contact.celular || null,
-          p_created_by: currentUserId
-        });
+      // Usar la API de Admin de Supabase (requiere service_role key)
+      const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: formData.operational_contact.email.toLowerCase(),
+        password: temporaryPassword,
+        email_confirm: true, // Auto-confirmar email
+        user_metadata: {
+          full_name: formData.operational_contact.nombre,
+          client_id: insertedClient.id,
+          client_user_id: clientUserId,
+          area: formData.operational_contact.area,
+          cargo: formData.operational_contact.cargo,
+          role: 'cliente'
+        }
+      });
 
-      if (userError) {
-        console.error('Error creando usuario:', userError);
+      if (authError) {
+        console.error('Error creando usuario en Auth:', authError);
         // No lanzar error, solo registrar
-      } else if (userResult?.success) {
-        clientUserId = userResult.user_id;
-        temporaryPassword = userResult.temporary_password;
-        console.log('Usuario creado:', clientUserId);
+      } else {
+        authUserId = authUser.user.id;
+        console.log('Usuario creado en Supabase Auth:', authUserId);
         
-        // TODO: Aquí deberías enviar el email con las credenciales
-        // await sendCredentialsEmail(formData.operational_contact.email, temporaryPassword);
+        // 3C: Actualizar client_users con auth_user_id
+        const { error: updateError } = await supabase
+          .from('client_users')
+          .update({ auth_user_id: authUserId })
+          .eq('id', clientUserId);
+        
+        if (updateError) {
+          console.error('Error vinculando auth_user_id:', updateError);
+        } else {
+          console.log('✅ Usuario vinculado correctamente');
+        }
       }
+      
+    } catch (authCreateError) {
+      console.error('Excepción creando en Auth:', authCreateError);
+      // Continuar sin lanzar error
     }
+    
+    // TODO: Enviar email con credenciales
+    console.log('📧 Pendiente: Enviar email con credenciales');
+    // await sendCredentialsEmail(formData.operational_contact.email, temporaryPassword);
+  }
+}
 
     // PASO 4: Asignar documentos requeridos
     const docsResult = await getRequiredDocuments(
