@@ -1,6 +1,6 @@
 // NuevoClienteIntegration.jsx
 // Este archivo conecta el formulario con Supabase
-// ACTUALIZADO con integración completa de Supabase Auth
+// ACTUALIZADO con integración completa de Supabase Auth + FIX DUPLICADOS
 
 import { supabase } from '../../lib/supabase';
 import { toast } from 'react-hot-toast';
@@ -134,7 +134,7 @@ export const getRequiredDocuments = async (municipality, businessType, businessS
 
 /**
  * CREAR CLIENTE Y USUARIO EN SUPABASE
- * ACTUALIZADO con integración completa de Auth
+ * ACTUALIZADO con integración completa de Auth + FIX DUPLICADOS
  */
 export const createClient = async (formData, currentUserId) => {
   try {
@@ -273,9 +273,9 @@ export const createClient = async (formData, currentUserId) => {
         // Mostrar notificación al admin
         if (authResult.userExists) {
           toast('El usuario ya existía en el sistema', {
-          duration: 4000,
-           icon: 'ℹ️'
-});
+            duration: 4000,
+            icon: 'ℹ️'
+          });
         } else {
           toast.success('Usuario creado. Se enviará un email con las credenciales', {
             duration: 5000
@@ -283,13 +283,14 @@ export const createClient = async (formData, currentUserId) => {
         }
       } else {
         console.error('⚠️ Error creando usuario con Auth:', authResult.error);
-          toast.error('Cliente creado, pero hubo un problema con el usuario', {
+        toast.error('Cliente creado, pero hubo un problema con el usuario', {
           duration: 5000,
-          icon: '⚠️'});
+          icon: '⚠️'
+        });
       }
     }
 
-    // PASO 4: Asignar documentos requeridos
+    // PASO 4: Asignar documentos requeridos (✅ FIX DUPLICADOS)
     const docsResult = await getRequiredDocuments(
       formData.municipality,
       formData.business_type,
@@ -298,47 +299,84 @@ export const createClient = async (formData, currentUserId) => {
     );
 
     if (docsResult.success && docsResult.documents.length > 0) {
-      const documentsToAssign = docsResult.documents.map(doc => ({
-        client_id: insertedClient.id,
-        document_type_id: doc.document_type_id,
-        status: 'pending',
-        is_mandatory: doc.is_mandatory,
-        uploaded_by: doc.uploaded_by || 'client',
-        assigned_to: doc.uploaded_by === 'consultant' ? 'consultant' : 'client',
-        created_by: currentUserId
-      }));
+      console.log(`📋 ${docsResult.documents.length} documentos requeridos encontrados`);
 
-      const { error: docsError } = await supabase
+      // ✅ NUEVO: Verificar documentos existentes
+      const { data: existingDocs } = await supabase
         .from('client_documents')
-        .insert(documentsToAssign);
+        .select('document_type_id')
+        .eq('client_id', insertedClient.id);
 
-      if (docsError) {
-        console.error('Error asignando documentos:', docsError);
+      const existingDocIds = new Set(
+        (existingDocs || []).map(doc => doc.document_type_id)
+      );
+
+      console.log(`📌 Documentos ya existentes: ${existingDocIds.size}`);
+
+      // ✅ NUEVO: Filtrar solo documentos nuevos
+      const newDocsToInsert = docsResult.documents
+        .filter(doc => !existingDocIds.has(doc.document_type_id))
+        .map(doc => ({
+          client_id: insertedClient.id,
+          document_type_id: doc.document_type_id,
+          status: 'pending',
+          is_mandatory: doc.is_mandatory,
+          uploaded_by: doc.uploaded_by || 'client',
+          assigned_to: doc.uploaded_by === 'consultant' ? 'consultant' : 'client',
+          created_by: currentUserId
+        }));
+
+      if (newDocsToInsert.length === 0) {
+        console.log('✅ Todos los documentos ya estaban asignados');
       } else {
-        console.log(`✅ ${documentsToAssign.length} documentos asignados correctamente`);
+        console.log(`📥 Insertando ${newDocsToInsert.length} documentos nuevos...`);
+
+        const { error: docsError } = await supabase
+          .from('client_documents')
+          .insert(newDocsToInsert);
+
+        if (docsError) {
+          console.error('Error asignando documentos:', docsError);
+        } else {
+          console.log(`✅ ${newDocsToInsert.length} documentos asignados correctamente`);
+        }
       }
     }
 
     // PASO 5: Asignar documentos adicionales personalizados
     if (formData.additional_documents && formData.additional_documents.length > 0) {
-      const additionalDocsToAssign = formData.additional_documents.map(docTypeId => ({
-        client_id: insertedClient.id,
-        document_type_id: docTypeId,
-        status: 'pending',
-        is_mandatory: false,
-        uploaded_by: 'client',
-        assigned_to: 'client',
-        created_by: currentUserId
-      }));
-
-      const { error: additionalDocsError } = await supabase
+      // ✅ NUEVO: También verificar duplicados en documentos adicionales
+      const { data: existingAdditional } = await supabase
         .from('client_documents')
-        .insert(additionalDocsToAssign);
+        .select('document_type_id')
+        .eq('client_id', insertedClient.id);
 
-      if (additionalDocsError) {
-        console.error('Error asignando documentos adicionales:', additionalDocsError);
-      } else {
-        console.log(`✅ ${additionalDocsToAssign.length} documentos adicionales asignados`);
+      const existingAdditionalIds = new Set(
+        (existingAdditional || []).map(doc => doc.document_type_id)
+      );
+
+      const newAdditionalDocs = formData.additional_documents
+        .filter(docTypeId => !existingAdditionalIds.has(docTypeId))
+        .map(docTypeId => ({
+          client_id: insertedClient.id,
+          document_type_id: docTypeId,
+          status: 'pending',
+          is_mandatory: false,
+          uploaded_by: 'client',
+          assigned_to: 'client',
+          created_by: currentUserId
+        }));
+
+      if (newAdditionalDocs.length > 0) {
+        const { error: additionalDocsError } = await supabase
+          .from('client_documents')
+          .insert(newAdditionalDocs);
+
+        if (additionalDocsError) {
+          console.error('Error asignando documentos adicionales:', additionalDocsError);
+        } else {
+          console.log(`✅ ${newAdditionalDocs.length} documentos adicionales asignados`);
+        }
       }
     }
 
