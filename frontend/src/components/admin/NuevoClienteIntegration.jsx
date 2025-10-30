@@ -1,8 +1,10 @@
 // NuevoClienteIntegration.jsx
 // Este archivo conecta el formulario con Supabase
+// ACTUALIZADO con integración completa de Supabase Auth
 
 import { supabase } from '../../lib/supabase';
 import { toast } from 'react-hot-toast';
+import { createClientUserWithAuth } from '../client/AuthIntegration.jsx';
 
 /**
  * VISTA PREVIA DEL CÓDIGO DE CLIENTE
@@ -132,12 +134,12 @@ export const getRequiredDocuments = async (municipality, businessType, businessS
 
 /**
  * CREAR CLIENTE Y USUARIO EN SUPABASE
+ * ACTUALIZADO con integración completa de Auth
  */
 export const createClient = async (formData, currentUserId) => {
   try {
     console.log('=== INICIANDO CREACIÓN DE CLIENTE ===');
     console.log('User ID:', currentUserId);
-    console.log('Form Data:', formData);
 
     // Preparar datos JSONB
     const legalContact = formData.legal_contact?.nombre ? {
@@ -230,98 +232,62 @@ export const createClient = async (formData, currentUserId) => {
       status: 'active'
     };
 
-    console.log('Insertando cliente:', clientData);
-
     const { data: insertedClient, error: insertError } = await supabase
       .from('clients')
-      .insert([clientData])
+      .insert(clientData)
       .select()
       .single();
 
     if (insertError) {
       console.error('Error insertando cliente:', insertError);
-      throw new Error(insertError.message);
+      throw insertError;
     }
 
-    console.log('Cliente insertado:', insertedClient);
+    console.log('✅ Cliente insertado:', insertedClient.id);
 
-// PASO 3: Crear usuario del cliente
-let clientUserId = null;
-let temporaryPassword = null;
-let authUserId = null;
-
-if (formData.operational_contact?.email && formData.operational_contact?.nombre) {
-  console.log('Creando usuario del cliente...');
-  
-  // 3A: Crear en client_users
-  const { data: userResult, error: userError } = await supabase
-    .rpc('create_client_user_account', {
-      p_client_id: insertedClient.id,
-      p_email: formData.operational_contact.email,
-      p_full_name: formData.operational_contact.nombre,
-      p_area: formData.operational_contact.area || 'Seguridad e Higiene',
-      p_cargo: formData.operational_contact.cargo || 'Responsable de trámites',
-      p_phone: formData.operational_contact.telefono,
-      p_celular: formData.operational_contact.celular || null,
-      p_created_by: currentUserId
-    });
-
-  if (userError) {
-    console.error('Error creando usuario:', userError);
-  } else if (userResult?.success) {
-    clientUserId = userResult.user_id;
-    temporaryPassword = userResult.temporary_password;
-    console.log('Usuario creado en client_users:', clientUserId);
+    // PASO 3: Crear usuario de cliente CON INTEGRACIÓN DE AUTH
+    let clientUserId = null;
+    let temporaryPassword = null;
+    let authUserId = null;
     
-    // 3B: Crear en Supabase Auth
-    try {
-      console.log('Creando usuario en Supabase Auth...');
+    if (formData.operational_contact?.email && formData.operational_contact?.nombre) {
+      console.log('📝 Creando usuario de cliente con Auth...');
       
-      // Usar la API de Admin de Supabase (requiere service_role key)
-      const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email: formData.operational_contact.email.toLowerCase(),
-        password: temporaryPassword,
-        email_confirm: true, // Auto-confirmar email
-        user_metadata: {
-          full_name: formData.operational_contact.nombre,
-          client_id: insertedClient.id,
-          client_user_id: clientUserId,
-          area: formData.operational_contact.area,
-          cargo: formData.operational_contact.cargo,
-          role: 'cliente'
-        }
-      });
-
-      if (authError) {
-        console.error('Error creando usuario en Auth:', authError);
-        // No lanzar error, solo registrar
-      } else {
-        authUserId = authUser.user.id;
-        console.log('Usuario creado en Supabase Auth:', authUserId);
+      // Usar la nueva función integrada de Auth
+      const authResult = await createClientUserWithAuth(
+        insertedClient.id,
+        formData.operational_contact,
+        currentUserId
+      );
+      
+      if (authResult.success) {
+        clientUserId = authResult.clientUserId;
+        authUserId = authResult.authUserId;
+        temporaryPassword = authResult.temporaryPassword;
         
-        // 3C: Actualizar client_users con auth_user_id
-        const { error: updateError } = await supabase
-          .from('client_users')
-          .update({ auth_user_id: authUserId })
-          .eq('id', clientUserId);
+        console.log('✅ Usuario de cliente creado con Auth');
+        console.log('   - Client User ID:', clientUserId);
+        console.log('   - Auth User ID:', authUserId);
+        console.log('   - Email enviado:', authResult.emailSent);
         
-        if (updateError) {
-          console.error('Error vinculando auth_user_id:', updateError);
+        // Mostrar notificación al admin
+        if (authResult.userExists) {
+          toast('El usuario ya existía en el sistema', {
+          duration: 4000,
+           icon: 'ℹ️'
+});
         } else {
-          console.log('✅ Usuario vinculado correctamente');
+          toast.success('Usuario creado. Se enviará un email con las credenciales', {
+            duration: 5000
+          });
         }
+      } else {
+        console.error('⚠️ Error creando usuario con Auth:', authResult.error);
+          toast.error('Cliente creado, pero hubo un problema con el usuario', {
+          duration: 5000,
+          icon: '⚠️'});
       }
-      
-    } catch (authCreateError) {
-      console.error('Excepción creando en Auth:', authCreateError);
-      // Continuar sin lanzar error
     }
-    
-    // TODO: Enviar email con credenciales
-    console.log('📧 Pendiente: Enviar email con credenciales');
-    // await sendCredentialsEmail(formData.operational_contact.email, temporaryPassword);
-  }
-}
 
     // PASO 4: Asignar documentos requeridos
     const docsResult = await getRequiredDocuments(
@@ -337,7 +303,7 @@ if (formData.operational_contact?.email && formData.operational_contact?.nombre)
         document_type_id: doc.document_type_id,
         status: 'pending',
         is_mandatory: doc.is_mandatory,
-        uploaded_by: doc.uploaded_by || 'client', // 'client', 'consultant', 'both'
+        uploaded_by: doc.uploaded_by || 'client',
         assigned_to: doc.uploaded_by === 'consultant' ? 'consultant' : 'client',
         created_by: currentUserId
       }));
@@ -349,11 +315,11 @@ if (formData.operational_contact?.email && formData.operational_contact?.nombre)
       if (docsError) {
         console.error('Error asignando documentos:', docsError);
       } else {
-        console.log(`${documentsToAssign.length} documentos asignados correctamente`);
+        console.log(`✅ ${documentsToAssign.length} documentos asignados correctamente`);
       }
     }
 
-    // PASO 5: Asignar documentos adicionales personalizados (si los hay)
+    // PASO 5: Asignar documentos adicionales personalizados
     if (formData.additional_documents && formData.additional_documents.length > 0) {
       const additionalDocsToAssign = formData.additional_documents.map(docTypeId => ({
         client_id: insertedClient.id,
@@ -372,7 +338,7 @@ if (formData.operational_contact?.email && formData.operational_contact?.nombre)
       if (additionalDocsError) {
         console.error('Error asignando documentos adicionales:', additionalDocsError);
       } else {
-        console.log(`${additionalDocsToAssign.length} documentos adicionales asignados`);
+        console.log(`✅ ${additionalDocsToAssign.length} documentos adicionales asignados`);
       }
     }
 
@@ -380,12 +346,14 @@ if (formData.operational_contact?.email && formData.operational_contact?.nombre)
     console.log('Client ID:', insertedClient.id);
     console.log('Client Code:', clientCode);
     console.log('Client User ID:', clientUserId);
+    console.log('Auth User ID:', authUserId);
 
     return {
       success: true,
       clientId: insertedClient.id,
       clientCode: clientCode,
       clientUserId: clientUserId,
+      authUserId: authUserId,
       temporaryPassword: temporaryPassword, // Solo para log, NO mostrar al usuario
       message: `Cliente creado exitosamente con código ${clientCode}`
     };
