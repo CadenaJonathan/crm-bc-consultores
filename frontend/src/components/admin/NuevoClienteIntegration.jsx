@@ -269,6 +269,43 @@ export const createClient = async (formData, currentUserId) => {
         console.log('   - Client User ID:', clientUserId);
         console.log('   - Auth User ID:', authUserId);
         console.log('   - Email enviado:', authResult.emailSent);
+
+        // ✨ ENVIAR CREDENCIALES POR EMAIL
+try {
+  console.log('📧 Enviando credenciales por email...');
+  
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  
+  const functionResponse = await fetch(
+    `${supabaseUrl}/functions/v1/send-credentials`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseAnonKey}`
+      },
+      body: JSON.stringify({
+        email: formData.email,
+        password: temporaryPassword,
+        clientName: formData.nombre_completo,
+        clientCode: clientCode
+      })
+    }
+  );
+
+  const emailResult = await functionResponse.json();
+  
+  if (emailResult.success) {
+    console.log('✅ Credenciales enviadas por email exitosamente');
+    console.log('   - Email ID:', emailResult.emailId);
+  } else {
+    console.error('⚠️ Error al enviar credenciales:', emailResult.error);
+  }
+} catch (emailError) {
+  console.error('❌ Error enviando email de credenciales:', emailError);
+  // No detenemos el proceso si falla el email
+}
         
         // Mostrar notificación al admin
         if (authResult.userExists) {
