@@ -181,96 +181,67 @@ export const sendCredentialsEmail = async (recipientEmail, temporaryPassword, us
 };
 
 /**
- * PROCESO COMPLETO: CREAR USUARIO DE CLIENTE CON AUTH
+ * CREAR USUARIO DE CLIENTE CON AUTH - VIA EDGE FUNCTION
+ * Evita el auto-login y envía credenciales por email
  */
-export const createClientUserWithAuth = async (clientId, operationalContact, createdBy) => {
+export const createClientUserWithAuth = async (clientId, email, temporaryPassword, clientCode, clientName) => {
+  console.log('=== LLAMANDO A EDGE FUNCTION PARA CREAR USUARIO ===');
+  console.log('Client ID:', clientId);
+  console.log('Email:', email);
+  console.log('Client Code:', clientCode);
+  console.log('Client Name:', clientName);
+
   try {
-    console.log('=== INICIANDO CREACIÓN DE USUARIO CON AUTH ===');
-    console.log('Client ID:', clientId);
-    console.log('Email:', operationalContact.email);
-    
-    // PASO 1: Crear usuario en Supabase Auth
-    const authResult = await createAuthUser(operationalContact.email, {
-      full_name: operationalContact.nombre,
-      area: operationalContact.area,
-      cargo: operationalContact.cargo,
-      phone: operationalContact.telefono || operationalContact.celular
-    });
-    
-    if (!authResult.success) {
-      console.error('❌ Error creando usuario en Auth');
-      // Continuar de todas formas, pero sin auth_user_id
-      return {
-        success: false,
-        error: authResult.error,
-        clientUserId: null
-      };
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    console.log('📡 Llamando a Edge Function create-client-user...');
+
+    const response = await fetch(
+      `${supabaseUrl}/functions/v1/create-client-user`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`
+        },
+        body: JSON.stringify({
+          clientId,
+          email,
+          password: temporaryPassword,
+          clientCode,
+          clientName
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Error HTTP de Edge Function:', response.status, errorText);
+      throw new Error(`Edge Function error: ${response.status} - ${errorText}`);
     }
-    
-    // PASO 2: Crear registro en client_users
-    const { data: clientUser, error: clientUserError } = await supabase
-      .from('client_users')
-      .insert({
-        client_id: clientId,
-        email: operationalContact.email.toLowerCase(),
-        full_name: operationalContact.nombre,
-        area: operationalContact.area || 'Seguridad e Higiene',
-        cargo: operationalContact.cargo || '',
-        phone: operationalContact.telefono || '',
-        celular: operationalContact.celular || '',
-        auth_user_id: authResult.authUserId, // Vincular con Auth
-        is_active: true,
-        email_verified: !authResult.userExists, // Si es nuevo, aún no verificado
-        created_by: createdBy
-      })
-      .select()
-      .single();
-    
-    if (clientUserError) {
-      console.error('❌ Error creando client_user:', clientUserError);
-      throw clientUserError;
+
+    const result = await response.json();
+
+    if (!result.success) {
+      console.error('❌ Error en Edge Function:', result.error);
+      throw new Error(result.error);
     }
-    
-    console.log('✅ Usuario de cliente creado:', clientUser.id);
-    
-    // PASO 3: Crear notificación de bienvenida
-    await createWelcomeNotification(clientId, {
-      full_name: operationalContact.nombre,
-      email: operationalContact.email
-    });
-    
-    // PASO 4: Enviar email con credenciales (solo si es usuario nuevo)
-    if (!authResult.userExists && authResult.temporaryPassword) {
-      await sendCredentialsEmail(
-        operationalContact.email,
-        authResult.temporaryPassword,
-        {
-          full_name: operationalContact.nombre,
-          cargo: operationalContact.cargo
-        }
-      );
-    }
-    
-    console.log('=== USUARIO CREADO EXITOSAMENTE CON AUTH ===');
-    
+
+    console.log('✅ Usuario creado exitosamente via Edge Function');
+    console.log('   - Client User ID:', result.clientUserId);
+    console.log('   - Auth User ID:', result.authUserId);
+    console.log('   - Email enviado: true');
+
     return {
-      success: true,
-      clientUserId: clientUser.id,
-      authUserId: authResult.authUserId,
-      temporaryPassword: authResult.temporaryPassword,
-      emailSent: !authResult.userExists,
-      userExists: authResult.userExists
+      clientUserId: result.clientUserId,
+      authUserId: result.authUserId,
+      emailSent: true
     };
-    
+
   } catch (error) {
-    console.error('=== ERROR EN createClientUserWithAuth ===');
-    console.error('Error completo:', error);
-    
-    return {
-      success: false,
-      error: error.message,
-      clientUserId: null
-    };
+    console.error('❌ Error llamando a Edge Function:', error);
+    throw error;
   }
 };
 

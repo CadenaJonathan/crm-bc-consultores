@@ -244,8 +244,9 @@ export const createClient = async (formData, currentUserId) => {
     }
 
     console.log('✅ Cliente insertado:', insertedClient.id);
-
-    // PASO 3: Crear usuario de cliente CON INTEGRACIÓN DE AUTH
+   
+   // PASO 3: Crear usuario de cliente CON INTEGRACIÓN DE AUTH
+   
     let clientUserId = null;
     let temporaryPassword = null;
     let authUserId = null;
@@ -253,78 +254,45 @@ export const createClient = async (formData, currentUserId) => {
     if (formData.operational_contact?.email && formData.operational_contact?.nombre) {
       console.log('📝 Creando usuario de cliente con Auth...');
       
-      // Usar la nueva función integrada de Auth
-      const authResult = await createClientUserWithAuth(
-        insertedClient.id,
-        formData.operational_contact,
-        currentUserId
-      );
+      // Generar contraseña temporal segura
+      temporaryPassword = Math.random().toString(36).slice(-8) + 
+                         Math.random().toString(36).slice(-8).toUpperCase() + 
+                         '!1';
       
-      if (authResult.success) {
-        clientUserId = authResult.clientUserId;
-        authUserId = authResult.authUserId;
-        temporaryPassword = authResult.temporaryPassword;
+      try {
+        // Usar la Edge Function para crear el usuario sin auto-login
+        const authResult = await createClientUserWithAuth(
+          insertedClient.id,                    // clientId
+          formData.operational_contact.email,   // email
+          temporaryPassword,                     // password
+          clientCode,                           // clientCode
+          formData.operational_contact.nombre   // clientName
+        );
         
-        console.log('✅ Usuario de cliente creado con Auth');
-        console.log('   - Client User ID:', clientUserId);
-        console.log('   - Auth User ID:', authUserId);
-        console.log('   - Email enviado:', authResult.emailSent);
-
-        // ✨ ENVIAR CREDENCIALES POR EMAIL
-try {
-  console.log('📧 Enviando credenciales por email...');
-  
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  
-  const functionResponse = await fetch(
-    `${supabaseUrl}/functions/v1/send-credentials`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseAnonKey}`
-      },
-      body: JSON.stringify({
-        email: formData.email,
-        password: temporaryPassword,
-        clientName: formData.nombre_completo,
-        clientCode: clientCode
-      })
-    }
-  );
-
-  const emailResult = await functionResponse.json();
-  
-  if (emailResult.success) {
-    console.log('✅ Credenciales enviadas por email exitosamente');
-    console.log('   - Email ID:', emailResult.emailId);
-  } else {
-    console.error('⚠️ Error al enviar credenciales:', emailResult.error);
-  }
-} catch (emailError) {
-  console.error('❌ Error enviando email de credenciales:', emailError);
-  // No detenemos el proceso si falla el email
-}
-        
-        // Mostrar notificación al admin
-        if (authResult.userExists) {
-          toast('El usuario ya existía en el sistema', {
-            duration: 4000,
-            icon: 'ℹ️'
-          });
-        } else {
-          toast.success('Usuario creado. Se enviará un email con las credenciales', {
-            duration: 5000
+        if (authResult) {
+          clientUserId = authResult.clientUserId;
+          authUserId = authResult.authUserId;
+          
+          console.log('✅ Usuario de cliente creado con Auth');
+          console.log('   - Client User ID:', clientUserId);
+          console.log('   - Auth User ID:', authUserId);
+          console.log('   - Email enviado:', authResult.emailSent);
+          
+          toast.success('Cliente y usuario creados. Email enviado con credenciales', {
+            duration: 5000,
+            icon: '✅'
           });
         }
-      } else {
-        console.error('⚠️ Error creando usuario con Auth:', authResult.error);
-        toast.error('Cliente creado, pero hubo un problema con el usuario', {
+      } catch (authError) {
+        console.error('⚠️ Error creando usuario con Auth:', authError);
+        toast.error('Cliente creado, pero hubo un problema al crear el usuario', {
           duration: 5000,
           icon: '⚠️'
         });
+        // Continuamos con la creación del cliente aunque falle el usuario
       }
+    } else {
+      console.log('ℹ️ No se proporcionó contacto operativo, omitiendo creación de usuario');
     }
 
     // PASO 4: Asignar documentos requeridos (✅ FIX DUPLICADOS)
