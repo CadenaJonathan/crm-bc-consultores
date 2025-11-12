@@ -1,4 +1,4 @@
-// Login.jsx - Versión Optimizada Sin Scroll
+// Login.jsx - CORREGIDO - Sin buscar en tabla clients
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
@@ -15,6 +15,7 @@ const Login = () => {
   const getUserRole = async (userEmail) => {
     console.log('🔍 Buscando rol para:', userEmail);
     
+    // PASO 1: Buscar en tabla public.users (admins/superadmins)
     const { data: adminUser, error: adminError } = await supabase
       .from('users')
       .select('role, email')
@@ -22,7 +23,7 @@ const Login = () => {
       .maybeSingle();
 
     if (adminUser) {
-      console.log('✅ Usuario encontrado en public.users:', adminUser);
+      console.log('✅ Usuario encontrado en public.users (admin):', adminUser);
       return {
         role: adminUser.role,
         isActive: true,
@@ -30,24 +31,39 @@ const Login = () => {
       };
     }
 
-    console.log('❌ No encontrado en public.users, buscando en auth.users...');
+    // PASO 2: Si no es admin, verificar que exista en client_users
+    console.log('❌ No encontrado en public.users, verificando client_users...');
 
-    const { data: authUser, error: authError } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     
-    if (!authError && authUser.user && authUser.user.email === userEmail) {
-      console.log('✅ Usuario encontrado en auth.users:', authUser.user.email);
-      
-      const isActive = authUser.user.email_confirmed_at !== null;
-      
-      return {
-        role: 'cliente',
-        isActive: isActive,
-        source: 'auth'
-      };
+    if (!user) {
+      throw new Error('Error obteniendo información del usuario');
     }
 
-    console.log('❌ Usuario no encontrado en ninguna tabla');
-    throw new Error('Usuario no encontrado en el sistema');
+    // Verificar que el client_user existe
+    const { data: clientUser, error: clientUserError } = await supabase
+      .from('client_users')
+      .select('id, email, auth_user_id')
+      .eq('auth_user_id', user.id)
+      .maybeSingle();
+
+    if (clientUserError) {
+      console.error('❌ Error buscando client_user:', clientUserError);
+      throw new Error('Error verificando usuario en el sistema');
+    }
+
+    if (!clientUser) {
+      console.error('❌ Usuario no encontrado en client_users');
+      throw new Error('Usuario no vinculado a ningún cliente. Contacta al administrador.');
+    }
+
+    console.log('✅ Usuario cliente encontrado:', clientUser.email);
+    
+    return {
+      role: 'cliente',
+      isActive: true,
+      source: 'auth'
+    };
   };
 
   const handleLogin = async (e) => {
@@ -63,6 +79,7 @@ const Login = () => {
     try {
       console.log('🚀 Iniciando login para:', email);
 
+      // PASO 1: Autenticar con Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password,
@@ -75,6 +92,7 @@ const Login = () => {
 
       console.log('✅ Autenticación exitosa para:', authData.user.email);
 
+      // PASO 2: Obtener rol del usuario
       const userInfo = await getUserRole(email.trim());
       
       console.log('✅ Información del usuario:', userInfo);
@@ -90,10 +108,11 @@ const Login = () => {
         throw new Error('Usuario sin permisos válidos');
       }
 
-      toast.success(`¡Bienvenido! Rol: ${userInfo.role}`);
+      toast.success(`¡Bienvenido! ${userInfo.role}`);
       
       console.log(`🎯 Redirigiendo usuario con rol: ${userInfo.role} desde ${userInfo.source}`);
       
+      // PASO 3: Redirigir según rol
       if (userInfo.role === 'cliente') {
         navigate('/dashboard/cliente', { replace: true });
       } else if (userInfo.role === 'admin' || userInfo.role === 'superadmin') {
@@ -115,6 +134,8 @@ const Login = () => {
         errorMessage = 'Demasiados intentos. Intenta más tarde.';
       } else if (error.message?.includes('User not found') || error.message?.includes('Usuario no encontrado')) {
         errorMessage = 'Usuario no registrado en el sistema';
+      } else if (error.message?.includes('no vinculado')) {
+        errorMessage = error.message; // Mensaje específico de client_users
       } else if (error.message) {
         errorMessage = error.message;
       }
