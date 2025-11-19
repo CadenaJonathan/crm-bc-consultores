@@ -7,13 +7,11 @@ import {
   MapPinIcon,
   DocumentTextIcon,
   PhoneIcon,
-  EnvelopeIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   MagnifyingGlassIcon,
   ArrowPathIcon,
   XCircleIcon,
-  ClockIcon,
   ChevronRightIcon
 } from '@heroicons/react/24/outline'
 
@@ -52,16 +50,24 @@ const useEstablishments = () => {
     try {
       setData(prev => ({ ...prev, loading: true, error: null }))
 
-      const userEmail = typeof user === 'string' ? user : user?.email
-      if (!userEmail) return
+      // ✅ VERIFICAR QUE user.id EXISTE
+      if (!user?.id) {
+        setData({
+          establishments: [],
+          loading: false,
+          error: null
+        })
+        return
+      }
 
-      const { data: clientData, error: clientError } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('email', userEmail)
+      // ✅ USAR auth_user_id CON user.id
+      const { data: clientUserData, error: clientUserError } = await supabase
+        .from('client_users')
+        .select('client_id')
+        .eq('auth_user_id', user.id)
         .single()
 
-      if (clientError?.code === 'PGRST116') {
+      if (clientUserError?.code === 'PGRST116') {
         setData({
           establishments: [],
           loading: false,
@@ -71,7 +77,7 @@ const useEstablishments = () => {
         return
       }
 
-      if (clientError) throw clientError
+      if (clientUserError) throw clientUserError
 
       const { data: establishments, error: estError } = await supabase
         .from('establishments')
@@ -84,7 +90,7 @@ const useEstablishments = () => {
             valid_until
           )
         `)
-        .eq('client_id', clientData.id)
+        .eq('client_id', clientUserData.client_id)
         .order('name')
 
       if (estError) throw estError

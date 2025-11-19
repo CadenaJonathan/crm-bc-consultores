@@ -2051,29 +2051,50 @@
     </div>
   );
 
-  const AdminPerfil = () => {
-    const { user, userRole } = useAuth();
-    
-    return (
-      <div className="space-y-6">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Mi Perfil</h2>
-          <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
-              <User className="h-8 w-8 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900">Administrador</h3>
-              <p className="text-gray-500">{user}</p>
-              <span className="inline-block mt-1 px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
-                {userRole}
-              </span>
-            </div>
+ const AdminPerfil = () => {
+  const { user, userRole } = useAuth();
+  
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">Mi Perfil</h2>
+        <div className="flex items-center space-x-4">
+          <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
+            <User className="h-8 w-8 text-blue-600" />
+          </div>
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Administrador</h3>
+            <p className="text-gray-500">{user?.email || 'Email no disponible'}</p>  {/* ✅ CORREGIDO */}
+            <span className="inline-block mt-1 px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+              {userRole}
+            </span>
           </div>
         </div>
+        
+        {/* Información adicional del perfil */}
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <h4 className="text-sm font-medium text-gray-900 mb-4">Información del Usuario</h4>
+          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Email</dt>
+              <dd className="mt-1 text-sm text-gray-900">{user?.email || 'No disponible'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Rol</dt>
+              <dd className="mt-1 text-sm text-gray-900">{userRole}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Fecha de Creación</dt>
+              <dd className="mt-1 text-sm text-gray-900">
+                {user?.created_at ? new Date(user.created_at).toLocaleDateString('es-MX') : 'No disponible'}
+              </dd>
+            </div>
+          </dl>
+        </div>
       </div>
-    );
-  };
+    </div>
+  );
+};
 
   // Componente principal (sin cambios)
   const AdminDashboard = () => {

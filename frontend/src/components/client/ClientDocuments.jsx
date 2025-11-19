@@ -1,10 +1,8 @@
 // src/components/client/ClientDocuments.jsx
-// VERSIÓN COMPLETA CON MODAL DE SUBIDA Y VISUALIZADOR
-
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
-import { UploadDocumentModal } from './UploadDocumentModal'
+import UploadDocumentModal from './UploadDocumentModal'
 import { DocumentViewerModal } from './DocumentViewerModal'
 import { 
   DocumentTextIcon,
@@ -94,12 +92,6 @@ const useOptimizedClientDocuments = () => {
   })
   
   const { user } = useAuth()
-  
-  const userEmail = useMemo(() => {
-    if (typeof user === 'string') return user
-    if (user?.email) return user.email
-    return null
-  }, [user])
 
   const fetchDocuments = useCallback(async (forceRefresh = false) => {
     const now = Date.now()
@@ -107,7 +99,8 @@ const useOptimizedClientDocuments = () => {
       return
     }
 
-    if (!userEmail) {
+    // ✅ VERIFICAR QUE user.id EXISTE
+    if (!user?.id) {
       setData(prev => ({ ...prev, loading: false, error: null, documents: [] }))
       return
     }
@@ -115,13 +108,14 @@ const useOptimizedClientDocuments = () => {
     try {
       setData(prev => ({ ...prev, loading: true, error: null }))
       
-      const { data: clientData, error: clientError } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('email', userEmail)
+      // ✅ USAR auth_user_id CON user.id
+      const { data: clientUserData, error: clientUserError } = await supabase
+        .from('client_users')
+        .select('client_id, clients(*)')
+        .eq('auth_user_id', user.id)
         .single()
 
-      if (clientError?.code === 'PGRST116') {
+      if (clientUserError?.code === 'PGRST116') {
         setData({
           documents: [],
           documentTypes: [],
@@ -133,11 +127,13 @@ const useOptimizedClientDocuments = () => {
         return
       }
 
-      if (clientError) throw new Error(`Error: ${clientError.message}`)
+      if (clientUserError) throw new Error(`Error: ${clientUserError.message}`)
+
+      const clientId = clientUserData.client_id
 
       const [docsResponse, typesResponse] = await Promise.all([
         supabase
-          .from('documents')
+          .from('client_documents')
           .select(`
             *,
             document_types (
@@ -148,7 +144,7 @@ const useOptimizedClientDocuments = () => {
               category
             )
           `)
-          .eq('client_id', clientData.id)
+          .eq('client_id', clientId)
           .order('updated_at', { ascending: false }),
         
         supabase
@@ -176,13 +172,13 @@ const useOptimizedClientDocuments = () => {
         lastFetch: now
       }))
     }
-  }, [userEmail, data.lastFetch])
+  }, [user, data.lastFetch])
 
   useEffect(() => {
-    if (userEmail && !data.lastFetch) {
+    if (user?.id && !data.lastFetch) {
       fetchDocuments()
     }
-  }, [userEmail])
+  }, [user])
 
   const refetch = useCallback(() => {
     fetchDocuments(true)

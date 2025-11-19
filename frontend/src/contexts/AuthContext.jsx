@@ -1,4 +1,4 @@
-// contexts/AuthContext.jsx - CORREGIDO SIN LOOPS
+// contexts/AuthContext.jsx - VERSIÓN CORREGIDA CON USER OBJECT
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
@@ -75,6 +75,7 @@ const getUserRole = async (userEmail) => {
 };
 
 export const AuthProvider = ({ children }) => {
+  // ✅ CAMBIO PRINCIPAL: user ahora es un OBJETO, no un string
   const [user, setUser] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -102,8 +103,10 @@ export const AuthProvider = ({ children }) => {
     return userPermissions.includes(requiredRole);
   };
 
-  // Función para procesar usuario autenticado
-  const processAuthenticatedUser = async (userEmail) => {
+  // ✅ FUNCIÓN MEJORADA: Procesar usuario autenticado con OBJETO COMPLETO
+  const processAuthenticatedUser = async (authUser) => {
+    const userEmail = authUser.email;
+    
     // Evitar procesamiento múltiple del mismo usuario
     if (processingAuthRef.current || currentUserRef.current === userEmail) {
       console.log('⚠️ Ya procesando usuario o usuario ya procesado:', userEmail);
@@ -116,11 +119,20 @@ export const AuthProvider = ({ children }) => {
 
       const userInfo = await getUserRole(userEmail);
       
-      setUser(userEmail);
+      // ✅ CAMBIO: Guardar objeto completo con id, email y metadata
+      setUser({
+        id: authUser.id,           // UUID de Supabase Auth
+        email: authUser.email,
+        email_confirmed_at: authUser.email_confirmed_at,
+        created_at: authUser.created_at,
+        metadata: authUser.user_metadata
+      });
+      
       setUserRole(userInfo.role);
       currentUserRef.current = userEmail;
       
       console.log('✅ Usuario procesado:', {
+        id: authUser.id,
         email: userEmail,
         role: userInfo.role,
         source: userInfo.source
@@ -163,9 +175,9 @@ export const AuthProvider = ({ children }) => {
           return;
         }
 
-        if (session?.user?.email) {
+        if (session?.user) {
           console.log('✅ Sesión inicial encontrada para:', session.user.email);
-          await processAuthenticatedUser(session.user.email);
+          await processAuthenticatedUser(session.user); // ✅ Pasar objeto completo
         } else {
           console.log('❌ No hay sesión inicial activa');
           clearUser();
@@ -199,11 +211,11 @@ export const AuthProvider = ({ children }) => {
         }
 
         // Procesar solo eventos importantes
-        if (event === 'SIGNED_IN' && session?.user?.email) {
+        if (event === 'SIGNED_IN' && session?.user) {
           // Solo procesar si es diferente al usuario actual
           if (currentUserRef.current !== session.user.email) {
             console.log('✅ Nuevo usuario conectado:', session.user.email);
-            await processAuthenticatedUser(session.user.email);
+            await processAuthenticatedUser(session.user); // ✅ Pasar objeto completo
           } else {
             console.log('👤 Usuario ya procesado, ignorando SIGNED_IN');
           }
@@ -260,7 +272,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const value = {
-    user,
+    user,        // ✅ Ahora es un objeto: { id, email, ... }
     userRole,
     loading,
     isAuthenticated: !!user,
@@ -271,7 +283,7 @@ export const AuthProvider = ({ children }) => {
   // Debug state - SOLO en desarrollo
   if (process.env.NODE_ENV === 'development') {
     console.log('🎛️ AuthContext state:', {
-      user,
+      user: user ? { id: user.id, email: user.email } : null, // ✅ Mostrar objeto
       userRole,
       loading,
       isAuthenticated: !!user,

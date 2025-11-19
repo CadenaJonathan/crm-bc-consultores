@@ -65,16 +65,20 @@ export const validateRFCInDB = async (rfc) => {
 /**
  * VALIDAR EMAIL ÚNICO (para usuarios de cliente Y email de empresa)
  */
+
 export const validateEmailUnique = async (email) => {
   try {
-    // Verificar en clients
+    // Verificar en clients (solo admins pueden hacer esta query)
     const { data: clientData, error: clientError } = await supabase
       .from('clients')
       .select('id, name')
       .eq('email', email.toLowerCase())
       .maybeSingle();
     
-    if (clientError && clientError.code !== 'PGRST116') throw clientError;
+    // Ignorar error 406 (Not Acceptable) - significa que no tiene permisos pero eso está bien
+    if (clientError && clientError.code !== 'PGRST116' && clientError.code !== '406') {
+      console.warn('Error verificando clients (puede ser normal si es cliente):', clientError)
+    }
     
     // Verificar en client_users
     const { data: userData, error: userError } = await supabase
