@@ -2,6 +2,8 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
+// Al inicio del archivo, después de los otros imports
+import PushNotificationSettings from './PushNotificationSettings';
 import {
   UserCircleIcon,
   BuildingOfficeIcon,
@@ -488,7 +490,7 @@ export const ClientProfile = () => {
           </div>
         </div>
       )}
-
+<PushNotificationSettings />
      {/* Seguridad */}
 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
   <h3 className="text-sm font-semibold text-gray-900 mb-4">Seguridad</h3>
