@@ -144,7 +144,7 @@ self.addEventListener('fetch', (event) => {
 // PUSH NOTIFICATIONS
 // ========================================
 self.addEventListener('push', (event) => {
-  console.log('🔔 [SW] Push recibido:', event);
+  console.log('[SW] Push recibido:', event);
 
   let notificationData = {
     title: 'Nueva notificación',
@@ -194,7 +194,7 @@ self.addEventListener('push', (event) => {
 // ACCIONES DE NOTIFICACIONES
 // ========================================
 self.addEventListener('notificationclick', (event) => {
-  console.log('🖱️ [SW] Click en notificación:', event);
+  console.log('[SW] Click en notificación:', event);
   
   event.notification.close();
 
@@ -222,7 +222,7 @@ self.addEventListener('notificationclick', (event) => {
 // BACKGROUND SYNC (Futuro)
 // ========================================
 self.addEventListener('sync', (event) => {
-  console.log('🔄 [SW] Background sync:', event.tag);
+  console.log('[SW] Background sync:', event.tag);
   
   if (event.tag === 'sync-documents') {
     event.waitUntil(syncDocuments());
@@ -230,7 +230,7 @@ self.addEventListener('sync', (event) => {
 });
 
 async function syncDocuments() {
-  console.log('📄 [SW] Sincronizando documentos...');
+  console.log('[SW] Sincronizando documentos...');
   // Implementación futura para sincronizar documentos offline
 }
 
@@ -238,7 +238,7 @@ async function syncDocuments() {
 // MENSAJES DEL CLIENTE
 // ========================================
 self.addEventListener('message', (event) => {
-  console.log('💬 [SW] Mensaje recibido:', event.data);
+  console.log('[SW] Mensaje recibido:', event.data);
 
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
@@ -255,4 +255,4 @@ self.addEventListener('message', (event) => {
   }
 });
 
-console.log('🚀 [SW] Service Worker cargado correctamente');
+console.log('[SW] Service Worker cargado correctamente');
